@@ -1,0 +1,4 @@
+﻿docs/Take-Home Assignment PostgreSQL HA on Kubernetes.pdf
+.env
+*.secret
+secrets/
