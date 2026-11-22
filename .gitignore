@@ -2,3 +2,9 @@
 .env
 *.secret
 secrets/
+
+# take-home
+docs/brief.pdf
+.env
+*.secret
+secrets/
