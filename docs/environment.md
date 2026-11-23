@@ -5,11 +5,11 @@
 
 ## Verdict
 
-**Yes, this machine can run a 3-node local cluster with 3 Postgres pods, MinIO and a plain Prometheus and Alertmanager stack.** Container networking now works. Memory limits are required and heavy tests must not overlap.
+**Yes, by planning estimate, this machine can run a 4-node local cluster (1 server, 3 agents) with 3 Postgres pods, Garage (ADR-014) and a plain Prometheus and Alertmanager stack.** Container networking now works. Memory limits are required and heavy tests must not overlap.
 
-One item remains for Phase 1:
+One item remains for the build:
 
-- **Fix: kubectl version skew.** kubectl is v1.37.2 and k3d's default k3s is v1.35.5. That is two minor versions apart, outside Kubernetes' supported ±1 skew. See [Proposed tool pinning](#proposed-tool-pinning-phase-1).
+- **Fix: kubectl version skew.** System kubectl is v1.37.2 and k3d's default k3s is v1.35.5, which is outside Kubernetes' supported ±1 skew. `versions.env` now pins kubectl and k3s to v1.35.10, and `make tools` will install them in L0. See [Tool pinning](#tool-pinning).
 
 ## Machine
 
@@ -74,11 +74,11 @@ BusyBox `wget` does not validate TLS certificates, so the HTTPS check proves con
 
 **Phase 2 follow-up:** add a `make preflight` target that runs before `make up` and checks host prerequisites: `ip_forward`, Docker, CPU, RAM and disk. A reviewer on a similar image then gets a clear message early instead of a confusing cluster failure.
 
-## Proposed tool pinning (Phase 1)
+## Tool pinning
 
-Proposal only, nothing is implemented yet.
+Decided in ADR-013. `versions.env` exists, and `make tools` is not built yet.
 
-- One versions file is the single source of truth for the k3s image, kubectl and every other CLI the project needs.
+- `versions.env` is the single source of truth for the k3s image, kubectl and every other pinned component.
 - `make tools` downloads those exact versions into a git-ignored `./bin`, and verifies checksums where upstream publishes them.
 - Project commands use `./bin` first, so system tools are left unchanged.
 - kubectl is pinned to the same minor version as k3s.
@@ -90,16 +90,16 @@ These are **planning estimates, not measurements**. Phase 1 should replace them 
 | Component | Memory (GiB) | Disk (GiB) |
 |---|---:|---:|
 | Host OS and Docker | 1.0 | already counted as used |
-| 3 k3s nodes | 2.0 | 6.0 (with images) |
+| 4 k3s nodes (1 server, 3 agents) | 2.7 | 8.0 (with images) |
 | 3 Postgres pods with HA agent | 3.0 | 9.0 |
-| MinIO | 0.5 | 8.0 |
+| Garage (budget, not measured) | 0.5 | 8.0 |
 | Prometheus | 1.0 | 2.0 |
-| Grafana, Alertmanager, exporters | 0.65 | 0.5 |
+| Alertmanager, exporters | 0.65 | 0.5 |
 | Backup job (transient) | 0.5 | n/a |
 | Restore-test instance (transient) | 1.0 | 3.0 |
-| **Peak total** | **9.65 of 15.6** | **28.5 of 44 free** |
+| **Peak total** | **10.35 of 15.6** | **30.5 of 44 free** |
 
-That leaves about 6 GiB of memory and 15 GiB of disk as headroom.
+That leaves about 5 GiB of memory and 13 GiB of disk as headroom.
 
 ## Constraints this machine puts on the project
 
