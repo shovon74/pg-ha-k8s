@@ -24,13 +24,13 @@ These resolve the Phase 0 open questions. The lead made them directly, and they 
 | ID | Topic | Decision |
 |---|---|---|
 | D1 | Operators | No operators of any kind, including for supporting components. |
-| D2 | Helm charts | No third-party Helm charts. MinIO, Prometheus, Alertmanager and any other supporting component are deployed from our own minimal manifests, so nothing can be mistaken for a turnkey component. |
+| D2 | Helm charts | No third-party Helm charts. Garage (object storage, ADR-014), Prometheus, Alertmanager and any other supporting component are deployed from our own minimal manifests, so nothing can be mistaken for a turnkey component. |
 | D3 | Postgres image | We build our own image from the official `postgres` image plus Patroni. No Spilo or other prebuilt HA images. |
 | D4 | `kubectl exec` | Allowed only inside committed, automated test or fault-injection scripts, and every use is documented. Never used in deploy, backup, restore or failover paths. |
 | D5 | Log redaction | Redact credentials and personal or cloud identifiers with visible placeholders, and keep a redaction log. |
 | D6 | Failure simulation | Node failure means stopping a k3d **agent** container. Storage failure means making the data volume unavailable. Known limitations must document how these differ from a real multi-zone cluster. |
 | D7 | Reference machine | Linux x86-64 with Docker, 4 vCPU and 16 GB RAM. The deployment keeps a reduced footprint to fit it. |
-| D8 | Targets and data | RTO ≤ 30 s, RPO measured and stated, synthetic dataset of about 100–200 MB. |
+| D8 | Targets and data | RTO target ≤ 30 s, with the real RTO measured and reported per failure mode. RPO measured and stated, synthetic dataset of about 100–200 MB. |
 | D9 | Repository | The repository is public. Secrets are never committed. |
 
 ### Assumptions
@@ -40,7 +40,7 @@ These resolve the Phase 0 open questions. The lead made them directly, and they 
 - **A3.** Security, fault tolerance and observability are scored, but the brief leaves their content to us (p.3). Only "document what you implemented, what you left out, and why" is a literal MUST. Specific controls are SHOULD (derived), except basic alerting and failure testing, which we treat as MUST because they are named scoring areas.
 - **A4.** † thresholds are engineering targets for a local cluster, not figures from the brief.
 - **A5.** "Failure" tests run at least **3 times per failure mode†**, reporting median and worst case.
-- **A6.** The **RTO target is ≤ 30 s†** for automatic failover. We apply it to the **worst run** of each failure mode (pod, node, storage), so a good median cannot hide a slow failover.
+- **A6.** The **RTO target is ≤ 30 s†** for automatic failover. We compare it with the **worst run** of each failure mode (pod, node, storage), so a good median cannot hide a slow failover. It is our target, not a pass/fail gate, and a miss is reported rather than tuned away unsafely (ADR-006).
 
 ---
 
@@ -70,13 +70,13 @@ These resolve the Phase 0 open questions. The lead made them directly, and they 
 
 | ID | Level | Pri | Requirement | Acceptance | Evidence |
 |---|---|---|---|---|---|
-| R3.1 | MUST | P1 | Automatic promotion when the primary **pod** fails | After a forced pod kill, a replica is promoted and the write probe recovers within **30 s†** in every run. The only command issued is the fault itself | `T:failover-pod` output |
-| R3.2 | MUST | P1 | Automatic promotion when the primary's **node** fails | Same as R3.1, including the 30 s† limit, after stopping the k3d agent container hosting the primary (D6) | `T:failover-node` output |
-| R3.3 | MUST | P1 | Automatic promotion when the primary's **storage** fails | Same as R3.1, including the 30 s† limit, after making the primary's data volume unavailable (D6) | `T:failover-storage` output |
-| R3.4 | MUST | P1 | Two primaries never accept writes at once | During primary isolation, the probe records **no** interval where two instances both accept writes, and the isolated primary stops accepting writes before or at promotion | `T:split-brain` timeline |
+| R3.1 | MUST | P1 | Automatic promotion when the primary **pod** fails | After a forced pod kill, a replica is promoted and the write probe recovers in every run, with RTO recorded under R3.7. The only command issued is the fault itself | `T:failover-pod` output |
+| R3.2 | MUST | P1 | Automatic promotion when the primary's **node** fails | Same as R3.1, after stopping the k3d agent container hosting the primary (D6) | `T:failover-node` output |
+| R3.3 | MUST | P1 | Automatic promotion when the primary's **storage** fails | Same as R3.1, after making the primary's data volume unavailable (D6) | `T:failover-storage` output |
+| R3.4 | MUST | P1 | Two primaries never accept writes at once. "Accept" means **acknowledge a commit** | During primary isolation, the probe records **no** interval where two instances both acknowledge commits, and the isolated primary acknowledges no commit after promotion. A commit that blocks or fails is not an accepted write | `T:split-brain` timeline |
 | R3.5 | MUST | P1 | Explain fencing and leader election or consensus | Doc covers the mechanism, timing values, the failure cases it handles and those it does not | Design doc section |
 | R3.6 | MUST | P1 | Old primary rejoins automatically as a replica | After each failover, the old primary returns with `pg_is_in_recovery()=true`, streaming from the new primary on the new timeline, with no human step | `T:failover-*` output |
-| R3.7 | MUST | P1 | State the measured RTO and method | RTO = fault injection to first committed write through the primary endpoint, probe interval ≤ 500 ms†. Median and worst case reported per failure mode, and **worst case ≤ 30 s†** for each | RTO table with raw probe logs |
+| R3.7 | MUST | P1 | Measure and report the real RTO and method per failure mode | RTO = fault injection to first committed write through the primary endpoint, probe interval ≤ 500 ms†. Median and worst case are reported per failure mode. **≤ 30 s† is our target, not a pass/fail gate:** a miss is reported and explained, and never justifies unsafe tuning (ADR-006) | RTO table with raw probe logs |
 
 ## R4. Automated backups (p.2)
 
@@ -84,10 +84,11 @@ These resolve the Phase 0 open questions. The lead made them directly, and they 
 |---|---|---|---|---|---|
 | R4.1 | MUST | P2 | Scheduled full (base) backups | A declared schedule exists and at least one scheduled (not hand-triggered) run has completed | Schedule manifest, `T:backup` output |
 | R4.2 | MUST | P2 | Continuous WAL archiving | `pg_stat_archiver` shows advancing `archived_count` and no growing failure count. A forced WAL switch appears in the bucket | `T:wal-archive` output |
-| R4.3 | MUST | P2 | Backups go to object storage (S3, GCS, Azure Blob or in-cluster MinIO) | Backup and WAL objects are listed from the bucket | `T:backup` output |
+| R4.3 | MUST | P2 | Backups go to object storage. The brief names S3, GCS, Azure Blob or in-cluster MinIO. We use in-cluster, S3-compatible **Garage**, pending spike S1 (ADR-014) | Backup and WAL objects are listed from the bucket | `T:backup` output |
 | R4.4 | MUST | P2 | Retention policy defined and enforced | Policy is stated. A test with more backups than allowed shows the oldest expired while the remaining backups stay restorable | Doc section, `T:retention` output |
 | R4.5 | MUST | P2 | Backups are verified automatically by restoring them | An automated restore check runs on a schedule or on demand and fails loudly on bad data | `T:restore-verify` output |
 | R4.6 | SHOULD | P2 | Backup and archiving survive failover (*derived*) | After failover, the new primary archives WAL and a new base backup succeeds with no manual change | `T:backup-after-failover` output |
+| R4.7 | OPTIONAL | P4 | `BACKUP_TARGET=gcs make up` uses a Kustomize overlay to switch the pgBackRest repository to a GCS bucket (`repo-type=gcs`). Credentials are supplied at runtime from an environment variable or file outside the repo and are never committed. **Lowest-priority item:** built only after all security SHOULDs, and cut before R11.6 | With the variable unset, the target is Garage. With `gcs`, stanza creation, backup, archive and restore pass against the bucket, and a secret scan finds no credential | `T:backup-gcs` output |
 
 ## R5. Restoration (p.2–3)
 
@@ -166,7 +167,7 @@ These resolve the Phase 0 open questions. The lead made them directly, and they 
 | R11.3 | MUST | P0 | Determinism: what is fixed vs model judgement, and how output stayed consistent | Dedicated section with concrete examples | Playbook section |
 | R11.4 | MUST | P0 | Agent-agnostic: what changes with another agent, vendor specifics kept separate | General method contains no vendor-specific instructions, which live in a separate location | Playbook section, repo layout |
 | R11.5 | MUST | P0 | Generalisation to another task (e.g. HA Redis or Vault) | Lists the files reused unchanged and those rewritten | Playbook section |
-| R11.6 | OPTIONAL | P0 | Run the **Phase 1 design-options step only** with a second agent (Gemini) using the identical prompt, and compare. **Lowest-priority item** | Identical prompt and both raw outputs are committed with a written comparison | Prompt, both outputs, comparison doc |
+| R11.6 | OPTIONAL | P0 | Run the **Phase 1 design-options step only** with a second agent (Gemini) using the identical prompt, and compare. **Second-lowest priority, above only R4.7** | Identical prompt and both raw outputs are committed with a written comparison | Prompt, both outputs, comparison doc |
 | R11.7 | MUST | P0 | No real credentials or confidential data in AI tools | Secret scan of session logs is clean | `T:secret-scan` output |
 | R11.8 | MUST | P0 | Lead can explain every submitted line without AI | Lead completes a review pass per component before merging | Lead sign-off checklist |
 

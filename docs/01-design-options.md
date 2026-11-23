@@ -36,12 +36,12 @@
 | O6 Fencing | 20/3/5 timing, lock-based demotion + sync replication, no watchdog. "Accepts writes" means **acknowledged commits**. Real RTO is reported per failure mode, with no unsafe tuning | ADR-006 |
 | O7 Endpoints | Patroni-managed `pg-rw`, selector-based `pg-ro`, no pooler | ADR-007 |
 | O8 Rejoin | `pg_rewind` with re-clone fallback | ADR-008 |
-| O9 Backups | pgBackRest, with one `make certs` CA reused for pgBackRest and Postgres TLS | ADR-009 |
+| O9 Backups | pgBackRest, with one `make certs` CA reused for pgBackRest and Postgres TLS. All repository settings live in one `repo.conf` | ADR-009 |
 | O10 Restore | Patroni custom bootstrap, one restore-test Job for CronJob and make | ADR-010 |
 | O11 Observability | Prometheus, Alertmanager, exporters, kube-state-metrics, node_exporter. Grafana out of scope unless every MUST and other SHOULD is done | ADR-011 |
 | O12 Security | Layered baseline, **built last** | ADR-012 |
 | O13 Packaging | Kustomize, Makefile, `versions.env`, `./bin` | ADR-013 |
-| Object storage | **Garage v2.5.0**, with pgBackRest repository encryption | ADR-014 |
+| Object storage | **Garage v2.5.0** by default, with pgBackRest repository encryption. Not off-site. Optional GCS overlay (R4.7) not built | ADR-014 |
 
 ---
 
@@ -183,9 +183,9 @@ Leases are not an option, because Patroni does not implement them. **[Verified]*
 
 | Option | `ttl` / `loop_wait` / `retry_timeout` | Estimated worst RTO | Pros | Cons | R-IDs | Effort |
 |---|---|---:|---|---|---|---|
-| A. Patroni defaults | 30 / 10 / 10 | 40 s+ | Most tolerant of API latency | **Fails the 30 s target** | Fails R3.7 | 0.5 h |
-| **B. Tuned to the floor** | **20 / 3 / 5** | **26–28 s** | Meets the target, satisfies the rule (3 + 10 ≤ 20) | Slow API responses can cause needless failovers | Meets R3.1–R3.4, R3.7 | 2 h |
-| C. Longer loop | 20 / 5 / 5 | 27–30 s | Slightly less API load | Almost no RTO margin | Risks R3.7 | 2 h |
+| A. Patroni defaults | 30 / 10 / 10 | 40 s+ | Most tolerant of API latency | **Misses the 30 s target** | Misses the R3.7 target | 0.5 h |
+| **B. Tuned to the floor** | **20 / 3 / 5** | **26–28 s** | Expected to meet the target, satisfies the rule (3 + 10 ≤ 20) | Slow API responses can cause needless failovers | Meets R3.1–R3.4, R3.7 | 2 h |
+| C. Longer loop | 20 / 5 / 5 | 27–30 s | Slightly less API load | Almost no RTO margin | Risks the R3.7 target | 2 h |
 
 Worst-case estimate for B: lock expiry 20 s, replica notices ≤ 3 s, election and promotion 2–4 s, client reconnect ≤ 1 s. **[Assumption: measured in `T:failover-*`]**
 
@@ -210,7 +210,7 @@ Also set **`primary_start_timeout: 0`**. The default would spend up to 300 s res
 
 **Residual risk to document:** on real nodes we would add a watchdog (R7.6).
 
-**Recommendation: timing B and fencing A.** Strongest reason: it is the only combination that meets the RTO and retains write fencing without a privileged device that could reboot the host.
+**Recommendation: timing B and fencing A.** Strongest reason: it is the only combination expected to meet the RTO target that retains write fencing without a privileged device that could reboot the host.
 
 ## O7. Client endpoints and pooling
 
@@ -272,6 +272,8 @@ Also set **`primary_start_timeout: 0`**. The default would spend up to 300 s res
 
 Garage runs as one node with `replication_factor = 1`, and `metadata_fsync` and `data_fsync` enabled because both default to off. Since it has no native TLS, pgBackRest encrypts the repository client-side. The brief names "S3, GCS, Azure Blob or MinIO" and not Garage, so the docs must state this substitution and the reason for it.
 
+**Backup target scope:** Garage stays the default so `make up` needs no cloud account. It shares the VM and disk with the database, so it is not off-site protection (`docs/known-limitations.md`). Every `repo1-*` setting lives in one `repo.conf`, so the optional `BACKUP_TARGET=gcs` overlay (R4.7) only has to replace that file and leave out the Garage workloads. The overlay is not built and has no hours in the lean plan.
+
 **Policy for pgBackRest + Garage:**
 
 | Item | Proposal |
@@ -308,7 +310,7 @@ R4.1 needs a truly scheduled run. Evidence will be a Job created by the CronJob 
 
 - **Scratch instance:** the Job restores into its own `emptyDir`, starts Postgres with no network exposure, checks data and exits, so cleanup is automatic.
 - **Checks:** recovery reaches its target, a marker table matches expected row counts and checksums, and `pg_amcheck` passes.
-- **PITR input:** `make restore TARGET_TIME='2026-11-25 14:30:00+06'`, using `--type=time` and `--target-action=promote`. A timezone offset is **required**, because the VM runs UTC and the lead works in UTC+6.
+- **PITR input:** `make restore TARGET_TIME='YYYY-MM-DD HH:MM:SS+06'`, using `--type=time` and `--target-action=promote`. A timezone offset is **required**, because the VM runs UTC and the lead works in UTC+6.
 - **Protect the source:** a restored cluster must **not** archive into the source stanza, or it would pollute the source's WAL history.
 - **Credentials:** the restored database contains the source's role passwords. A `post_bootstrap` step should reset them to the target namespace's Secret. **[Assumption: confirm in Phase 2]**
 - **Limit to document:** in-cluster object storage is lost with the cluster, so this proves namespace-level recovery and not off-site disaster recovery.
@@ -435,7 +437,7 @@ All 55 MUST requirements are listed. "Build" means the requirement is delivered 
 
 **MUSTs left uncovered: none.** Thirteen are process or submission items with no architecture decision: R11.1–R11.5, R11.7, R11.8 and R12.1–R12.6. They are covered by the build plan.
 
-**MUSTs at highest risk:** R3.7 (thin RTO margin), R3.3 (storage failure may not crash Postgres cleanly) and R4.3 (Garage with pgBackRest is not yet proven).
+**MUSTs at highest risk:** R3.1–R3.3 failover behaviour, with a thin margin against the R3.7 RTO target, R3.3 (storage failure may not crash Postgres cleanly) and R4.3 (Garage with pgBackRest is not yet proven).
 
 ---
 
@@ -508,7 +510,7 @@ The lean plan is **16 focused hours** and keeps every MUST. It has no spare cont
 
 **SHOULD cut lines**
 
-MUST items are never cut. SHOULDs are cut from the lowest priority upward, so security goes first and replication and failover go last. R11.6 (Gemini comparison, OPTIONAL) is dropped before any SHOULD.
+MUST items are never cut. SHOULDs are cut from the lowest priority upward, so security goes first and replication and failover go last. OPTIONAL items go before any SHOULD: R4.7 (GCS overlay) is dropped first, then R11.6 (Gemini comparison). R4.7 is built only after all security SHOULDs.
 
 | Cut | Trigger (cumulative hours) | Cut | Priority |
 |---|---|---|---|

@@ -33,8 +33,12 @@ Use **Garage v2.5.0** as a single node with `replication_factor = 1`.
 - Because Garage has no native TLS, enable **pgBackRest repository encryption** (`aes-256-cbc`). Backup content is encrypted before it leaves the client, and SigV4 means the secret key is not sent.
 - Restrict access to the S3 port with NetworkPolicy.
 
+**Backup target scope:** Garage stays the default, so `make up` works for any reviewer with no cloud account or credentials. An optional GCS target is tracked as R4.7 and is not built yet. ADR-009 keeps the repository settings in one place so that overlay stays cheap to add.
+
 ## Consequences
 
+- **The in-cluster Garage repository shares the VM and disk with the database, so it is not off-site disaster protection. In production, the pgBackRest repository points at GCS/S3 with bucket versioning and a retention lock, off-site from the cluster, using keyless workload identity where available.** This is recorded in `docs/known-limitations.md`.
+- A retention lock must not outlast pgBackRest's retention, or `expire` cannot delete old backups **[Assumption, not tested]**.
 - The smallest footprint and a narrow attack surface.
 - Object metadata and object names are still visible on the network, and pgBackRest does not authenticate the server. A TLS reverse proxy is the production improvement.
 - One storage node has no redundancy, so it is a documented limitation.
@@ -43,4 +47,4 @@ Use **Garage v2.5.0** as a single node with `replication_factor = 1`.
 
 ## R-IDs covered
 
-R4.2, R4.3, R4.4, R5.1, R8.10, R9.6
+R4.2, R4.3, R4.4, R4.7, R5.1, R8.10, R9.6, R12.5
