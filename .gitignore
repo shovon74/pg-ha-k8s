@@ -8,3 +8,7 @@ docs/brief.pdf
 .env
 *.secret
 secrets/
+
+# project-local tools and runtime state
+/bin/
+/.run/

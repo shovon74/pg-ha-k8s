@@ -508,6 +508,17 @@ The lean plan is **16 focused hours** and keeps every MUST. It has no spare cont
 | S3 | Can UID 999 create a 0700 `PGDATA` on a local-path volume? | Add a minimal init step and document the exception |
 | S4 | Is v1 Endpoints served at runtime, and how long does EndpointSlice mirroring take? | Reassess O7 before L2 |
 
+### Phase notes from L0
+
+Findings from the L0 spikes that later phases must honour. Evidence is in `docs/evidence/L0-spike-S*.md`.
+
+- **L1:** The certificates assume namespaces `pg-ha` and `pg-restore` and a headless Service named `pg-headless`. Using other names means reissuing them.
+- **L2:** The 13 s in ADR-006 bounds when Patroni *issues* the demotion. Postgres must then stop within the remaining 7 s, and `T:split-brain` must measure this.
+- **L3:** `pgbackrest verify` can exit 0 while reporting `status: error`, so the backup job and alerts must check the reported status and not only the exit code.
+- **L3 watch item:** S1 showed that a connection opened during Garage's first startup can stall for about 135 s, and that a connect timeout with retry bounds it. Whether a **Garage restart** does the same to running clients is untested. L3 must measure WAL archiving across a Garage restart and confirm that pgBackRest's timeouts bound any stalled connection. See `docs/evidence/L0-spike-S1-history.md`.
+- **L4:** `pg_amcheck` needs `--install-missing`. That is acceptable on the scratch restore, but it must not run against production.
+- **L6:** The API egress policy must allow the API server's **real backend IP and port**. Allowing only the Service IP stays blocked, so the address must be discovered at deploy time.
+
 **SHOULD cut lines**
 
 MUST items are never cut. SHOULDs are cut from the lowest priority upward, so security goes first and replication and failover go last. OPTIONAL items go before any SHOULD: R4.7 (GCS overlay) is dropped first, then R11.6 (Gemini comparison). R4.7 is built only after all security SHOULDs.

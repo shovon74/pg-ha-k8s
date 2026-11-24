@@ -1,0 +1,32 @@
+# ADR-001: 1 tainted server + 3 agents. ADR-007: node-monitor-grace-period=20s.
+# The k3s image is passed by scripts/cluster.sh from versions.env.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: pg-ha
+servers: 1
+agents: 3
+kubeAPI:
+  hostIP: 127.0.0.1
+  hostPort: "6550"
+options:
+  k3d:
+    wait: true
+    timeout: 180s
+    disableLoadbalancer: true   # one server, so a load balancer adds nothing
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik,servicelb,metrics-server
+        nodeFilters: [server:*]
+      - arg: --kube-controller-manager-arg=node-monitor-grace-period=20s
+        nodeFilters: [server:*]
+      - arg: --node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule
+        nodeFilters: [server:*]
+    nodeLabels:
+      - label: pg-ha/role=db
+        nodeFilters: [agent:*]
+      - label: pg-ha/role=infra
+        nodeFilters: [server:*]
+  kubeconfig:
+    updateDefaultKubeconfig: false   # never touch ~/.kube/config
+    switchCurrentContext: false

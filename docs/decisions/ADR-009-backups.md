@@ -15,7 +15,7 @@ We need scheduled base backups, continuous WAL archiving, enforced retention and
 
 Use **pgBackRest 2.60.1** with the object store from ADR-014:
 
-- A full backup daily at 20:00 UTC through a CronJob.
+- A full backup through a CronJob on a **configurable schedule**, defaulting to daily at 20:00 UTC.
 - Continuous asynchronous WAL archiving.
 - `repo1-retention-full=7`, enforced by automatic `expire`.
 - `pgbackrest verify` daily after the backup.
@@ -28,6 +28,16 @@ Use **pgBackRest 2.60.1** with the object store from ADR-014:
 - The default `repo.conf` targets Garage with `repo1-type=s3`.
 - A later GCS overlay (R4.7) replaces that one file with `repo1-type=gcs`, `repo1-gcs-bucket` and `repo1-gcs-key-type`, and leaves out the Garage workloads. Use `auto` for keyless identity where available. Otherwise use `service`, with a key file supplied at runtime from outside the repo.
 - **The overlay is not built yet.**
+
+**The backup schedule is a parameter.** The VM is stopped overnight, so a daily 20:00 UTC run may never fire during testing. Evidence for R4.1 is captured with a short schedule, for example every 10 minutes (`*/10 * * * *`), from a Job the CronJob created itself. The evidence states the schedule that was used.
+
+**Backups follow the primary without config changes.** pgBackRest lists all three Postgres pods as `pg1-host`, `pg2-host` and `pg3-host`, using their stable headless-service DNS names. It determines which one is the current primary at run time, so a backup after failover needs no configuration change.
+
+**Generated secrets survive teardown.** Generated secrets, including the pgBackRest repository cipher passphrase, live in a git-ignored `./secrets/` directory.
+
+- Generation is idempotent and never overwrites an existing value.
+- `make down` preserves `./secrets/`.
+- Only an explicit **`make clean-secrets`** deletes them, and it warns first that **existing backups become unrecoverable** without the passphrase.
 
 ## Consequences
 
