@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help preflight tools certs secrets cluster image up down status clean-secrets \
-        deploy seed test-replication spike-s1 spike-s2 spike-s3 spike-s4 spikes
+        deploy seed test-replication failover-pod failover-node failover-storage test-split-brain switchover test-api-outage spike-s1 spike-s2 spike-s3 spike-s4 spikes
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | expand -t 16
@@ -37,6 +37,24 @@ seed: ## Load a synthetic ~150 MB pgbench dataset through pg-rw (SEED_SCALE=10)
 
 test-replication: ## L1 gate: topology, sync standby, endpoints, lag, slots, replica rejoin
 	@tests/test-replication.sh
+
+failover-pod: ## L2: delete the primary pod, 3 runs (RUNS=n)
+	@tests/failover.sh pod
+
+failover-node: ## L2: stop the primary's agent container, 3 runs
+	@tests/failover.sh node
+
+failover-storage: ## L2: primary's data volume read-only, 3 runs
+	@tests/failover.sh storage
+
+test-split-brain: ## L2: cut the primary off from the API server only, 3 runs
+	@tests/failover.sh split-brain
+
+switchover: ## Planned switchover to TO=pg-N (default the sync standby), RTO measured
+	@tests/failover.sh switchover
+
+test-api-outage: ## L2 optional: stop the k3d server (API) for OUTAGE=60 s
+	@tests/api-outage.sh
 
 status: ## Show nodes, resource use, Patroni members, lag and the sync standby
 	@scripts/status.sh

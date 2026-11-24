@@ -18,6 +18,7 @@ finish() {
     printf -- '- **Covers:** R1.1, R1.2, R1.3, R1.7 (bytes and seconds), R2.1, R2.2, R7.4 (placement), ADR-004 sync standby, ADR-005 slot cap\n'
     printf -- '- **Run:** %s (UTC), %s s\n- **Reproduce:** `make test-replication`\n' "$STARTED" "$((SECONDS-T0))"
     printf -- '- **Versions:** k3s `%s`, image `%s`\n' "${K3S_IMAGE%@*}" "$PG_IMAGE"
+    [ ! -f "$EV_DIR/L1-replication-history.md" ] || printf -- '- **History:** [`L1-replication-history.md`](L1-replication-history.md) (maintained by hand, never written by this test)\n'
     printf -- '- **kubectl exec:** psql runs only in the test'"'"'s own client pod `%s`, never in a Postgres pod (D4)\n' "$CLIENT"
     printf '\n## Checks\n\n| Check | Result |\n|---|---|\n'; cat "$CHECKS"; cat "$BODY"; } | redact > "$EV_FILE"
   log "RESULT L1: $verdict -> docs/evidence/L1-replication.md"

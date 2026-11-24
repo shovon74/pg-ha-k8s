@@ -1,0 +1,50 @@
+# Write probe (R3.7): every 500 ms, a new connection through pg-rw inserts one sequenced row.
+# A row counts as acknowledged only when psql returns it. The client gives up after 3 s, so a commit
+# blocked waiting for a standby is never counted. Each attempt runs in the background, keeping the
+# 500 ms cadence while earlier attempts hang. Lines: ACK seq start_ts ack_ts server_ip | ERR seq start_ts end_ts
+apiVersion: batch/v1
+kind: Job
+metadata: {name: pg-probe}
+spec:
+  backoffLimit: 0
+  template:
+    metadata: {labels: {app.kubernetes.io/name: pg-probe}}
+    spec:
+      restartPolicy: Never
+      nodeSelector: {pg-ha/role: infra}     # the probe must survive agent failures
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+      containers:
+      - name: probe
+        image: __PG_IMAGE__
+        imagePullPolicy: IfNotPresent
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+        env:
+        - {name: HOME, value: /tmp}
+        - {name: RUN_ID, value: "__RUN_ID__"}
+        - {name: DURATION, value: "__DURATION__"}
+        - {name: CONN, value: "host=pg-rw.pg-ha.svc.cluster.local user=app dbname=app connect_timeout=2 keepalives=1 keepalives_idle=1 keepalives_interval=1 keepalives_count=2"}
+        - name: PGPASSWORD
+          valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-app-password}}
+        command: [bash, -c]
+        args:
+        - |
+          for _ in $(seq 1 30); do
+            psql "$CONN" -XAtq -c "create table if not exists probe (run text, seq bigint, client_ts timestamptz,
+              server_ts timestamptz default clock_timestamp(), server_addr inet default inet_server_addr(),
+              primary key (run, seq))" && break; sleep 1
+          done
+          echo "START $(date +%s.%N)"
+          end=$(( $(date +%s) + DURATION )); i=0
+          while [ "$(date +%s)" -lt "$end" ]; do
+            i=$((i + 1))
+            ( s=$(date +%s.%N)
+              if out=$(timeout -s KILL 3 psql "$CONN" -XAtq -v ON_ERROR_STOP=1 -c \
+                   "insert into probe (run, seq, client_ts) values ('$RUN_ID', $i, to_timestamp($s)) returning host(server_addr)" 2>/dev/null) && [ -n "$out" ]
+              then echo "ACK $i $s $(date +%s.%N) $out"; else echo "ERR $i $s $(date +%s.%N)"; fi ) &
+            sleep 0.5
+          done
+          wait
+          echo "DONE $(date +%s.%N)"
+        volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]

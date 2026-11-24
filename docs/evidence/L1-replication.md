@@ -6,6 +6,7 @@
 - **Run:** 2026-11-24T17:03:43Z (UTC), 24 s
 - **Reproduce:** `make test-replication`
 - **Versions:** k3s `rancher/k3s:v1.35.10-k3s1`, image `pg-ha-postgres:17.12-patroni4.1.5-pgbackrest2.60.1`
+- **History:** [`L1-replication-history.md`](L1-replication-history.md) (maintained by hand, never written by this test)
 - **kubectl exec:** psql runs only in the test's own client pod `pg-test-client`, never in a Postgres pod (D4)
 
 ## Checks
