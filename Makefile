@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help preflight tools certs secrets cluster image up down status clean-secrets \
-        spike-s1 spike-s2 spike-s3 spike-s4 spikes
+        deploy seed test-replication spike-s1 spike-s2 spike-s3 spike-s4 spikes
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | expand -t 16
@@ -26,10 +26,19 @@ cluster: tools ## Create the k3d cluster (1 tainted server + 3 agents)
 image: tools ## Build our Postgres image and import it into k3d
 	@scripts/image.sh
 
-up: preflight tools certs secrets cluster image ## Bootstrap everything built so far
+up: preflight tools certs secrets cluster image deploy ## Bootstrap everything built so far
 	@scripts/status.sh
 
-status: ## Show cluster nodes and resource use
+deploy: ## Deploy the Patroni cluster and wait until healthy
+	@scripts/deploy.sh
+
+seed: ## Load a synthetic ~150 MB pgbench dataset through pg-rw (SEED_SCALE=10)
+	@scripts/seed.sh
+
+test-replication: ## L1 gate: topology, sync standby, endpoints, lag, slots, replica rejoin
+	@tests/test-replication.sh
+
+status: ## Show nodes, resource use, Patroni members, lag and the sync standby
 	@scripts/status.sh
 
 down: ## Delete only this project's cluster; keeps ./secrets

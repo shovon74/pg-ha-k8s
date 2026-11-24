@@ -1,0 +1,59 @@
+# Patroni L1 base config. Per-pod values (name, addresses, passwords) come from environment variables.
+# L3 adds archive_mode, archive_command, restore_command and create_replica_methods in a later file
+# (20-archive.yml), which Patroni merges over this one.
+scope: pg-rw            # Patroni names the leader Endpoints after the scope, so this is the pg-rw Service
+restapi:
+  listen: 0.0.0.0:8008
+kubernetes:             # ADR-002
+  use_endpoints: true
+  labels: {app.kubernetes.io/name: pg, cluster-name: pg-rw}
+  role_label: role
+  ports: [{name: postgresql, port: 5432}]
+bootstrap:
+  dcs:
+    ttl: 20             # ADR-006: loop_wait + 2 x retry_timeout = 13 s < ttl
+    loop_wait: 3
+    retry_timeout: 5
+    primary_start_timeout: 0
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: true          # ADR-004: non-strict, one synchronous standby
+    synchronous_mode_strict: false
+    synchronous_node_count: 1
+    postgresql:
+      use_pg_rewind: true           # ADR-008
+      use_slots: true               # ADR-005
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        wal_log_hints: "on"         # ADR-008, in addition to data checksums
+        max_wal_size: 512MB         # ADR-005
+        max_slot_wal_keep_size: 1GB # ADR-005: hard cap on WAL held for slots
+        max_wal_senders: 10
+        max_replication_slots: 10
+        max_connections: 100
+        shared_buffers: 128MB
+        password_encryption: scram-sha-256
+  initdb:
+    - data-checksums
+    - encoding: UTF8
+  post_bootstrap: /etc/patroni/scripts/post-bootstrap.sh
+postgresql:
+  listen: 0.0.0.0:5432
+  data_dir: /data/pgdata            # a subdirectory of the volume, created 0700 (S3)
+  bin_dir: /usr/lib/postgresql/17/bin
+  pgpass: /tmp/pgpass
+  use_unix_socket: true
+  remove_data_directory_on_rewind_failure: true   # ADR-008: re-clone if pg_rewind fails
+  parameters:
+    unix_socket_directories: /var/run/postgresql
+    # Server TLS on with the L0 certificate. hostssl enforcement waits for L6.
+    ssl: "on"
+    ssl_cert_file: /etc/pg-tls/tls.crt
+    ssl_key_file: /etc/pg-tls/tls.key
+    ssl_ca_file: /etc/pg-tls/ca.crt
+  pg_hba:
+    - local all all peer
+    - host replication replicator 127.0.0.1/32 scram-sha-256   # Patroni's local timeline check on replicas
+    - host replication replicator 10.42.0.0/16 scram-sha-256
+    - host all all 10.42.0.0/16 scram-sha-256
+    - host all all 127.0.0.1/32 scram-sha-256

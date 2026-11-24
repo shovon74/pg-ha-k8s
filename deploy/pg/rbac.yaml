@@ -1,0 +1,28 @@
+# ADR-002: least privilege for Patroni's Kubernetes DCS with use_endpoints.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: pg}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: pg-patroni}
+rules:
+  # Leader lock, config, sync and failover keys live in Endpoints pg-rw, pg-rw-config, pg-rw-sync, pg-rw-failover.
+  - apiGroups: [""]
+    resources: [endpoints]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Member state is stored as pod annotations, and the role label drives pg-ro.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, update, patch]
+  # Patroni creates a headless Service for pg-rw-config so the Endpoints controller never removes it.
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: pg-patroni}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: pg-patroni}
+subjects:
+  - {kind: ServiceAccount, name: pg}

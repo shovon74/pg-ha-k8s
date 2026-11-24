@@ -80,5 +80,4 @@ run "kubectl -n $NS logs job/s3-reattach" || true
 check "Second pod read the row from the same PVC" grep -qx survived <<<"$(kubectl -n "$NS" logs job/s3-reattach 2>/dev/null || true)"
 check "Second pod completed" test $re_ok = 1
 run "kubectl -n $NS get pods -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,PHASE:.status.phase; kubectl -n $NS get pvc" || true
-note "Run history: the first run on 2026-11-23 failed because this test script used a bash-only construct under \`sh\` before initdb. PGDATA had already been created as 0700 by UID 999 in that run. The script was fixed and this is the complete re-run."
 ev_finish

@@ -1,0 +1,29 @@
+# Stable pod DNS names (pg-N.pg-headless.pg-ha.svc), which the L0 server certificate covers.
+apiVersion: v1
+kind: Service
+metadata: {name: pg-headless}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true   # members must resolve each other while bootstrapping
+  selector: {app.kubernetes.io/name: pg, cluster-name: pg-rw}
+  ports:
+    - {name: postgresql, port: 5432}
+    - {name: patroni, port: 8008}
+---
+# ADR-007: no selector. Patroni writes the leader into Endpoints pg-rw, mirrored to an EndpointSlice.
+# The Endpoints object is deliberately not declared here, so re-applying never overwrites the lock.
+apiVersion: v1
+kind: Service
+metadata: {name: pg-rw}
+spec:
+  ports:
+    - {name: postgresql, port: 5432, targetPort: 5432}
+---
+# ADR-007: ready replicas only. Patroni maintains the role label.
+apiVersion: v1
+kind: Service
+metadata: {name: pg-ro}
+spec:
+  selector: {app.kubernetes.io/name: pg, cluster-name: pg-rw, role: replica}
+  ports:
+    - {name: postgresql, port: 5432}

@@ -1,0 +1,17 @@
+# L1: Patroni-managed Postgres (ADR-001..008). Rendered by scripts/deploy.sh, which fills in the image.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pg-ha
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - services.yaml
+  - statefulset.yaml
+  - pdb.yaml
+configMapGenerator:
+  # Patroni reads every file in /etc/patroni/conf.d, merged in name order.
+  # L3 adds archiving as a further file (for example 20-archive.yml) without editing 10-base.yml.
+  - name: pg-patroni
+    files: [patroni/10-base.yml]
+  - name: pg-scripts
+    files: [scripts/post-bootstrap.sh]
