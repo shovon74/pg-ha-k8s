@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # L2 failure harness (R3.1-R3.7, R6.3, ADR-006). Usage: tests/failover.sh pod|node|storage|split-brain|switchover
 #   RUNS=n (default 3, switchover 1), TO=pg-N (switchover target, default the current sync standby)
+#   EV_OUT=path writes the evidence there instead of docs/evidence/L2/<mode>.md, and leaves L2-failover.md alone
+#   (used by L3 to fault the cluster without replacing the L2 results).
 #
 # RTO = fault injection to the first commit acknowledged by a new primary, seen by the probe Job
 # (tests/probe-job.yaml), which writes through pg-rw every 500 ms. RPO = acknowledged sequence numbers
@@ -20,12 +22,17 @@
 #                (the REST API is unauthenticated until L6). The API server pod proxy is not used for this
 #                POST because Patroni rejects its request without a Content-Length header (HTTP 411).
 # psql runs only in the test client pod, never in a Postgres pod.
+#
+# After every run (L3): WAL archive health on the current primary. Its pg_stat_archiver.failed_count must not
+# have grown since before the fault, and after a WAL fill a segment must be archived within ARCHIVE_BOUND
+# (archive_timeout 60 s + 30 s margin). CoreDNS placement is recorded per run. A run whose RTO is over the
+# 30 s target is reported as OVER TARGET, never as PASS, and the script then exits non-zero.
 . "$(dirname "$0")/lib.sh"
 MODE=${1:-}; case "$MODE" in pod|node|storage|split-brain|switchover) ;; *) die "usage: $0 pod|node|storage|split-brain|switchover" ;; esac
 RUNS=${RUNS:-$([ "$MODE" = switchover ] && echo 1 || echo 3)}
 [[ "$RUNS" =~ ^[1-9]$ ]] || die "RUNS must be 1-9"
 case "$MODE" in pod) DURATION=70 ;; switchover) DURATION=50 ;; *) DURATION=110 ;; esac
-W=$(mktemp -d); mkdir -p "$EV_DIR/L2"; EV_FILE="$EV_DIR/L2/$MODE.md"
+W=$(mktemp -d); mkdir -p "$EV_DIR/L2"; EV_FILE="${EV_OUT:-$EV_DIR/L2/$MODE.md}"
 PENDING_RESTORE=""; SAMPLER_PIDS=""
 
 restore_fault() {
@@ -64,8 +71,8 @@ container_pid() { # agent pod -> host-visible PID of the Postgres container, via
 client_up
 kubectl get ns "$NS" >/dev/null 2>&1 || die "namespace $NS not found, run: make up"
 SUMMARY=$(mktemp -p "$W")
-printf '| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | Result |\n|---|---|---|---:|---:|---:|---:|---:|---|---:|---|\n' > "$SUMMARY"
-RTOS=""
+printf '| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |\n|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|\n' > "$SUMMARY"
+RTOS=""; OVER=0; TARGET_RTO=30
 
 for N in $(seq 1 "$RUNS"); do
   R="$W/run$N"; mkdir -p "$R"; run_fails=$FAILS
@@ -75,6 +82,8 @@ for N in $(seq 1 "$RUNS"); do
   OLD=$(leader); OLD_IP=$(pod_ip "$OLD"); OLD_NODE=$(pod_node "$OLD"); OLD_UID=$(pod_uid "$OLD")
   SYNC=$(sync_standby); TL0=$(patroni_cluster | jq -r '.members[] | select(.role == "leader") | .timeline')
   TARGET=${TO:-$SYNC}
+  CDNS=$(coredns_nodes)
+  declare -A FC0=(); for m in pg-0 pg-1 pg-2; do FC0[$m]=$(archive_stat "$(member "$m")" 2>/dev/null | awk '{print $1}'); done
   [ "$MODE" != switchover ] || [ "$TARGET" != "$OLD" ] || die "switchover target $TARGET is already the leader"
   RUN_ID="$MODE-$N-$(date +%s)"
 
@@ -111,7 +120,7 @@ for N in $(seq 1 "$RUNS"); do
       T_FAULT=$(now); curl -sS -m 60 -X POST -H 'Content-Type: application/json' --data-binary @"$R/body.json" "http://127.0.0.1:$PFPORT/switchover" > "$R/switchover.txt" 2>&1 || true
       kill $PF 2>/dev/null || true; wait $PF 2>/dev/null || true ;;
   esac
-  note "Fault at $(iso "$T_FAULT") UTC on primary \`$OLD\` ($OLD_IP, node \`$OLD_NODE\`, timeline $TL0). Sync standby before: \`$SYNC\`."
+  note "Fault at $(iso "$T_FAULT") UTC on primary \`$OLD\` ($OLD_IP, node \`$OLD_NODE\`, timeline $TL0). Sync standby before: \`$SYNC\`. CoreDNS on \`$CDNS\`."
   got=0; if [ "$MODE" = switchover ]; then wait_until 90 leader_is "$TARGET" || got=1; else wait_until 120 leader_is_not "$OLD" || got=1; fi
   T_LOCK=$(now); NEW=$(leader)
   check "run $N: lock moved from $OLD to a new leader ($NEW)" test $got = 0
@@ -145,15 +154,15 @@ for N in $(seq 1 "$RUNS"); do
   HOLDERS=$(awk '$1=="L" && NF>=3 {print $3}' "$R/lock.txt" | uniq | paste -sd'>' -)
   case "$MODE" in pod|storage) LOGARGS="$OLD" ;; *) LOGARGS="$OLD --since-time=$(date -u -d "@${T_FAULT%.*}" +%FT%TZ)" ;; esac
   kubectl -n "$NS" logs $LOGARGS > "$R/old.log" 2>/dev/null || true
-  if grep -qiE 'Removing data directory|replica has been created using basebackup|bootstrap from leader' "$R/old.log"; then REJOIN="re-clone"
-  elif grep -qiE 'running pg_rewind|pg_rewind.*(success|done)|rewind' "$R/old.log"; then REJOIN="pg_rewind"
+  if grep -qiE 'Removing data directory|replica has been created using basebackup|bootstrap from leader|reinitializing due to diverged timelines' "$R/old.log"; then REJOIN="re-clone"
+  elif grep -qiE 'running pg_rewind|pg_rewind.*(success|done)' "$R/old.log"; then REJOIN="pg_rewind"
   else REJOIN="restart only"; fi
   TL1=$(patroni_cluster | jq -r '.members[] | select(.role == "leader") | .timeline')
   OLD_TL=$(patroni_cluster | jq -r --arg o "$OLD" '.members[] | select(.name == $o) | .timeline')
 
   note "Probe: $NACK acknowledged, $NERR failed attempts. Lock holders sampled: \`$HOLDERS\`. Leadership samples: $NTICKS rounds of 3 members."
   note "First acknowledged write on the new primary at $( [ -n "$FIRST_NEW" ] && iso "$FIRST_NEW" || echo none) UTC. Last on the old primary at $( [ -n "$LAST_OLD" ] && iso "$LAST_OLD" || echo none) UTC. Timeline $TL0 -> $TL1. Fault restored at $(iso "$T_RESTORE"), old member streaming from the new primary at $(iso "$T_REJOIN") UTC."
-  run "grep -iE 'rewind|basebackup|Removing data|bootstrap from leader|Demoting|demote|promot|shut down|immediate shutdown|read-only|PANIC' $R/old.log | sed -E 's/[0-9a-f]{32,}/[hex]/g' | head -12" || true
+  run "grep -iE 'rewind|basebackup|diverged|Removing data|bootstrap from leader|Demoting|demote|promot|shut down|immediate shutdown|read-only|PANIC' $R/old.log | sed -E 's/[0-9a-f]{32,}/[hex]/g' | head -12" || true
   [ "$MODE" != switchover ] || run "cat $R/switchover.txt" || true
   check "run $N: writes resumed on the new primary (RTO $RTO s)" test -n "$FIRST_NEW"
   check "run $N: RPO 0, all $NACK acknowledged rows present on the new primary" test "$MISSING" = 0
@@ -173,15 +182,24 @@ for N in $(seq 1 "$RUNS"); do
     check "run $N: old primary stopped within 20 s of the last renewal (13 s + 7 s stop budget)" awk -v d="$(secs "$LAST_RENEW" "$T_STOPPED")" 'BEGIN{exit !(d != "n/a" && d <= 20)}'
     check "run $N: old primary's last acknowledged write precedes the new leader's lock acquisition" awk -v a="${LAST_OLD:-0}" -v b="${ACQ:-0}" 'BEGIN{exit !(b > 0 && a < b)}'
   fi
+  check "run $N: CoreDNS was not on the faulted primary's node ($OLD_NODE)" bash -c "! grep -qw -- '$OLD_NODE' <<<'$CDNS'"
+
+  # Archive health on the current primary (L3). Failures counted against its own value before the fault.
+  CUR=$(leader); archive_check "$(member "$CUR")" "${FC0[$CUR]:-0}" "$ARCHIVE_BOUND"
+  note "Archive health on primary \`$CUR\`: failed_count $((${FC0[$CUR]:-0})) before the fault, +$ARCH_FAILED since. After a WAL fill, a segment was archived in $ARCH_T s (bound $ARCHIVE_BOUND s). Last archived \`$(awk '{print $3}' <<<"$ARCH_STAT")\`. Pending .ready: $(awk '{print $4, "(" $5 ")"}' <<<"$ARCH_STAT")."
+  check "run $N: no new archive failures on the primary $CUR" test "$ARCH_FAILED" -le 0
+  check "run $N: the primary archived a segment within $ARCHIVE_BOUND s of a WAL fill" test "$ARCH_T" != n/a
+
   res=PASS; [ $FAILS -eq $run_fails ] || res=FAIL
-  printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' "$N" "$OLD" "$NEW" "$RTO" "$GAP" "$NACK" "$MISSING" "$MAXP" "$REJOIN" "$(secs "$T_FAULT" "$T_REJOIN")" "$res" >> "$SUMMARY"
+  if [ "$res" = PASS ] && awk -v r="$RTO" -v t="$TARGET_RTO" 'BEGIN{exit !(r == "n/a" || r > t)}'; then res="OVER TARGET"; OVER=$((OVER + 1)); fi
+  printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' "$N" "$OLD" "$NEW" "$RTO" "$GAP" "$NACK" "$MISSING" "$MAXP" "$REJOIN" "$(secs "$T_FAULT" "$T_REJOIN")" "$CDNS" "$ARCH_FAILED" "$ARCH_T" "$( [ "$res" = PASS ] && echo PASS || echo "**$res**")" >> "$SUMMARY"
   RTOS="$RTOS $RTO"
-  log "run $N: RTO=$RTO s gap=$GAP s acked=$NACK missing=$MISSING maxprimaries=$MAXP rejoin=$REJOIN $res"
+  log "run $N: RTO=$RTO s gap=$GAP s acked=$NACK missing=$MISSING maxprimaries=$MAXP rejoin=$REJOIN coredns=$CDNS archfail=+$ARCH_FAILED archived=${ARCH_T}s $res"
 done
 
 # Evidence file for this mode, then the combined L2 summary.
-verdict=PASS; [ "$FAILS" -eq 0 ] || verdict=FAIL
-STATS=$(tr ' ' '\n' <<<"$RTOS" | grep -E '^[0-9.]+$' | sort -n | awk '{a[NR]=$1} END {if (NR) printf "min %.2f s, median %.2f s, max %.2f s over %d runs", a[1], (NR%2 ? a[(NR+1)/2] : (a[NR/2]+a[NR/2+1])/2), a[NR], NR; else print "no RTO measured"}')
+verdict=PASS; [ "$OVER" -eq 0 ] || verdict="OVER TARGET"; [ "$FAILS" -eq 0 ] || verdict=FAIL
+STATS=$(tr ' ' '\n' <<<"$RTOS" | { grep -E '^[0-9.]+$' || true; } | sort -n | awk '{a[NR]=$1} END {if (NR) printf "min %.2f s, median %.2f s, max %.2f s over %d runs", a[1], (NR%2 ? a[(NR+1)/2] : (a[NR/2]+a[NR/2+1])/2), a[NR], NR; else print "no RTO measured"}')
 case "$MODE" in
   pod) DESC='`kubectl delete pod` on the primary, with the default grace period. Patroni shuts Postgres down and releases the lock, so this measures a clean handover. An abrupt death is covered by the node mode.' ;;
   node) DESC='`docker stop` on the k3d agent container hosting the primary (D6), restarted with `docker start` once a new leader holds the lock. Every process on that node dies, so the lock must expire (ttl 20 s) before a replica can take over.' ;;
@@ -194,9 +212,9 @@ esac
   printf -- '- **Run:** %s (UTC), %s s\n- **Reproduce:** `make %s`\n' "$STARTED" "$((SECONDS-T0))" "$([ "$MODE" = switchover ] && echo switchover || ([ "$MODE" = split-brain ] && echo test-split-brain || echo "failover-$MODE"))"
   printf -- '- **Versions:** k3s `%s`, image `%s`\n' "${K3S_IMAGE%@*}" "$PG_IMAGE"
   printf -- '- **Method:** RTO is fault injection to the first commit acknowledged by a new primary, from a probe writing through pg-rw every 500 ms. Write gap is the last acknowledged write before that to the first after it. RPO counts acknowledged rows missing on the new primary.\n'
-  printf '\n## Summary\n\n%s\n\nRTO: %s. Target 30 s.\n\n## Checks\n\n| Check | Result |\n|---|---|\n' "$(cat "$SUMMARY")" "$STATS"
+  printf '\n## Summary\n\n%s\n\nRTO: %s. Target 30 s%s.\n\n## Checks\n\n| Check | Result |\n|---|---|\n' "$(cat "$SUMMARY")" "$STATS" "$( [ "$OVER" -eq 0 ] || echo ": **$OVER run(s) OVER TARGET**")"
   cat "$CHECKS"; cat "$BODY"; } | redact > "$EV_FILE"
 
-"$ROOT_DIR/tests/l2-summary.sh"
-log "RESULT L2 $MODE: $verdict ($STATS) -> docs/evidence/L2/$MODE.md"
-[ "$FAILS" -eq 0 ]
+[ -n "${EV_OUT:-}" ] || "$ROOT_DIR/tests/l2-summary.sh"
+log "RESULT L2 $MODE: $verdict ($STATS) -> ${EV_FILE#$ROOT_DIR/}"
+[ "$FAILS" -eq 0 ] && [ "$OVER" -eq 0 ]

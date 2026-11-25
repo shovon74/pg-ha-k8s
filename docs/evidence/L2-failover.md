@@ -1,8 +1,20 @@
 # L2: failover, switchover and split-brain
 
-Generated from the per-mode files in [`L2/`](L2/) each time a mode runs. Timestamps are UTC.
+Generated from the per-mode files in [`L2/`](L2/) each time a mode runs. Timestamps are UTC. Hand-written notes: [`L2-failover-history.md`](L2-failover-history.md).
 
-RTO is fault injection to the first commit acknowledged by a new primary, measured by a probe Job writing through pg-rw every 500 ms over new connections with a 2 s connect timeout. RPO is the number of acknowledged rows missing on the new primary. The target is RTO at most 30 s with safe settings (ttl 20, loop_wait 3, retry_timeout 5).
+RTO is fault injection to the first commit acknowledged by a new primary, measured by a probe Job writing through pg-rw every 500 ms over new connections with a 2 s connect timeout. RPO is the number of acknowledged rows missing on the new primary. The target is RTO at most 30 s with safe settings (ttl 20, loop_wait 3, retry_timeout 5). A run over the target is reported as **OVER TARGET**, not PASS. After every run the harness also checks WAL archive health on the current primary (no new archive failures, a segment archived within 90 s of a WAL fill) and records where CoreDNS ran.
+
+## RTO by failure mode
+
+| Mode | Result | RTO |
+|---|---|---|
+| [pod](L2/pod.md) | PASS | min 3.60 s, median 3.78 s, max 5.13 s over 3 runs |
+| [node](L2/node.md) | PASS | min 23.22 s, median 23.93 s, max 26.19 s over 3 runs |
+| [storage](L2/storage.md) | PASS | min 2.39 s, median 3.37 s, max 3.69 s over 3 runs |
+| [split-brain](L2/split-brain.md) | PASS | min 20.47 s, median 22.18 s, max 22.20 s over 3 runs |
+| [switchover](L2/switchover.md) | PASS | min 2.08 s, median 2.08 s, max 2.08 s over 1 runs |
+| chain | not run | |
+| [api-outage](L2/api-outage.md) | PASS |  |
 
 ## pod: Result: PASS
 
@@ -10,13 +22,13 @@ RTO is fault injection to the first commit acknowledged by a new primary, measur
 - Details: [`L2/pod.md`](L2/pod.md)
 
 
-| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | Result |
-|---|---|---|---:|---:|---:|---:|---:|---|---:|---|
-| 1 | pg-2 | pg-0 | 3.15 | 2.64 | 134 | 0 | 1 | restart only | 7.92 | PASS |
-| 2 | pg-0 | pg-1 | 3.08 | 3.02 | 132 | 0 | 1 | restart only | 8.16 | PASS |
-| 3 | pg-1 | pg-2 | 3.88 | 2.89 | 133 | 0 | 1 | pg_rewind | 9.68 | PASS |
+| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
+| 1 | pg-1 | pg-0 | 3.78 | 3.24 | 132 | 0 | 1 | restart only | 8.88 | k3d-pg-ha-server-0 | 0 | 2.26 | PASS |
+| 2 | pg-0 | pg-2 | 5.13 | 4.55 | 131 | 0 | 1 | restart only | 10.33 | k3d-pg-ha-server-0 | 0 | 2.48 | PASS |
+| 3 | pg-2 | pg-1 | 3.60 | 3.09 | 132 | 0 | 1 | restart only | 10.01 | k3d-pg-ha-server-0 | 0 | 2.41 | PASS |
 
-RTO: min 3.08 s, median 3.15 s, max 3.88 s over 3 runs. Target 30 s.
+RTO: min 3.60 s, median 3.78 s, max 5.13 s over 3 runs. Target 30 s.
 
 
 ## node: Result: PASS
@@ -25,13 +37,13 @@ RTO: min 3.08 s, median 3.15 s, max 3.88 s over 3 runs. Target 30 s.
 - Details: [`L2/node.md`](L2/node.md)
 
 
-| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | Result |
-|---|---|---|---:|---:|---:|---:|---:|---|---:|---|
-| 1 | pg-2 | pg-0 | 21.91 | 21.87 | 174 | 0 | 1 | pg_rewind | 46.11 | PASS |
-| 2 | pg-0 | pg-1 | 22.62 | 22.66 | 146 | 0 | 1 | pg_rewind | 91.02 | PASS |
-| 3 | pg-1 | pg-2 | 23.35 | 23.16 | 169 | 0 | 1 | pg_rewind | 57.79 | PASS |
+| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
+| 1 | pg-1 | pg-0 | 23.22 | 23.43 | 170 | 0 | 1 | restart only | 39.42 | k3d-pg-ha-server-0 | 0 | 5.39 | PASS |
+| 2 | pg-0 | pg-2 | 26.19 | 25.83 | 166 | 0 | 1 | restart only | 47.96 | k3d-pg-ha-server-0 | 0 | 2.32 | PASS |
+| 3 | pg-2 | pg-1 | 23.93 | 23.81 | 166 | 0 | 1 | restart only | 45.49 | k3d-pg-ha-server-0 | 0 | 2.60 | PASS |
 
-RTO: min 21.91 s, median 22.62 s, max 23.35 s over 3 runs. Target 30 s.
+RTO: min 23.22 s, median 23.93 s, max 26.19 s over 3 runs. Target 30 s.
 
 
 ## storage: Result: PASS
@@ -40,13 +52,13 @@ RTO: min 21.91 s, median 22.62 s, max 23.35 s over 3 runs. Target 30 s.
 - Details: [`L2/storage.md`](L2/storage.md)
 
 
-| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | Result |
-|---|---|---|---:|---:|---:|---:|---:|---|---:|---|
-| 1 | pg-2 | pg-0 | 2.44 | 2.66 | 213 | 0 | 1 | pg_rewind | 20.95 | PASS |
-| 2 | pg-0 | pg-1 | 1.79 | 2.12 | 212 | 0 | 1 | pg_rewind | 22.17 | PASS |
-| 3 | pg-1 | pg-2 | 3.94 | 4.03 | 207 | 0 | 1 | pg_rewind | 24.45 | PASS |
+| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
+| 1 | pg-1 | pg-0 | 2.39 | 2.58 | 212 | 0 | 1 | restart only | 12.09 | k3d-pg-ha-server-0 | 0 | 2.26 | PASS |
+| 2 | pg-0 | pg-2 | 3.69 | 4.00 | 209 | 0 | 1 | restart only | 14.10 | k3d-pg-ha-server-0 | 0 | 2.38 | PASS |
+| 3 | pg-2 | pg-1 | 3.37 | 3.17 | 209 | 0 | 1 | restart only | 15.46 | k3d-pg-ha-server-0 | 0 | 2.60 | PASS |
 
-RTO: min 1.79 s, median 2.44 s, max 3.94 s over 3 runs. Target 30 s.
+RTO: min 2.39 s, median 3.37 s, max 3.69 s over 3 runs. Target 30 s.
 
 
 ## split-brain: Result: PASS
@@ -55,13 +67,13 @@ RTO: min 1.79 s, median 2.44 s, max 3.94 s over 3 runs. Target 30 s.
 - Details: [`L2/split-brain.md`](L2/split-brain.md)
 
 
-| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | Result |
-|---|---|---|---:|---:|---:|---:|---:|---|---:|---|
-| 1 | pg-2 | pg-0 | 20.80 | 15.37 | 187 | 0 | 1 | restart only | 23.91 | PASS |
-| 2 | pg-0 | pg-1 | 22.68 | 16.60 | 173 | 0 | 1 | restart only | 42.56 | PASS |
-| 3 | pg-1 | pg-2 | 19.82 | 15.26 | 186 | 0 | 1 | restart only | 22.70 | PASS |
+| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
+| 1 | pg-1 | pg-0 | 20.47 | 14.49 | 189 | 0 | 1 | restart only | 24.61 | k3d-pg-ha-server-0 | 0 | 2.45 | PASS |
+| 2 | pg-0 | pg-2 | 22.20 | 15.11 | 188 | 0 | 1 | restart only | 25.81 | k3d-pg-ha-server-0 | 0 | 2.45 | PASS |
+| 3 | pg-2 | pg-1 | 22.18 | 15.69 | 186 | 0 | 1 | restart only | 27.38 | k3d-pg-ha-server-0 | 0 | 2.69 | PASS |
 
-RTO: min 19.82 s, median 20.80 s, max 22.68 s over 3 runs. Target 30 s.
+RTO: min 20.47 s, median 22.18 s, max 22.20 s over 3 runs. Target 30 s.
 
 
 ## switchover: Result: PASS
@@ -70,15 +82,26 @@ RTO: min 19.82 s, median 20.80 s, max 22.68 s over 3 runs. Target 30 s.
 - Details: [`L2/switchover.md`](L2/switchover.md)
 
 
-| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | Result |
-|---|---|---|---:|---:|---:|---:|---:|---|---:|---|
-| 1 | pg-0 | pg-1 | 2.54 | 2.58 | 93 | 0 | 1 | pg_rewind | 8.78 | PASS |
-| 2 | pg-1 | pg-2 | 1.83 | 1.85 | 95 | 0 | 1 | restart only | 8.79 | PASS |
-| 3 | pg-2 | pg-0 | 2.60 | 2.63 | 93 | 0 | 1 | restart only | 9.31 | PASS |
+| Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
+| 1 | pg-1 | pg-0 | 2.08 | 2.15 | 95 | 0 | 1 | restart only | 8.90 | k3d-pg-ha-server-0 | 0 | 1.84 | PASS |
 
-RTO: min 1.83 s, median 2.54 s, max 2.60 s over 3 runs. Target 30 s.
+RTO: min 2.08 s, median 2.08 s, max 2.08 s over 1 runs. Target 30 s.
 
 
-## api-outage
+## chain
 
 Not run yet.
+
+## api-outage: Result: PASS
+
+- **Fault:** `docker stop` on the k3d server container for 60 s, then `docker start`. With `failsafe_mode` off (ADR-002), every member should demote, so writes stop and reads continue. Observed by a Job on an agent node that queried each member by pod IP every second. Its log was read after the API returned, so nothing depends on `make status` or the API during the outage.
+- Details: [`L2/api-outage.md`](L2/api-outage.md)
+
+
+| Outage (s) | Last write during outage (s) | Rounds with no primary | Reads served | Max primaries in a round | API back (s) | Healthy again (s) | First write after (s) | Result |
+|---:|---:|---:|---|---:|---:|---:|---:|---|
+| 60 | +9.14 | 55 of 65 | 65 of 65 rounds | 1 | +74.11 | +114.52 | +86.13 | PASS |
+
+Times are seconds after the server was stopped. Write unavailability lasts the whole outage plus recovery, by design.
+

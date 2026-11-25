@@ -21,7 +21,9 @@ q() {
 export -f q; export NS CLIENT
 
 client_up() {
-  kubectl -n "$NS" get pod "$CLIENT" >/dev/null 2>&1 && kubectl -n "$NS" wait --for=condition=Ready "pod/$CLIENT" --timeout=5s >/dev/null 2>&1 && return 0
+  # A pod being deleted (by an earlier harness's cleanup) still reports Ready until it is gone, so it does not count.
+  [ -z "$(kubectl -n "$NS" get pod "$CLIENT" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ] &&
+    kubectl -n "$NS" get pod "$CLIENT" >/dev/null 2>&1 && kubectl -n "$NS" wait --for=condition=Ready "pod/$CLIENT" --timeout=5s >/dev/null 2>&1 && return 0
   kubectl -n "$NS" delete pod "$CLIENT" --ignore-not-found --wait=true >/dev/null
   sed "s|__PG_IMAGE__|$PG_IMAGE|" <<'YAML' | kubectl -n "$NS" apply -f - >/dev/null
 apiVersion: v1
@@ -65,3 +67,36 @@ primary_confirms() { # [member that must be streaming]
   [ -z "${1:-}" ] || grep -q "^$1 streaming " <<<"$r" || return 1
   patroni_healthy
 }
+
+# Cluster DNS placement (L3: a single CoreDNS replica on the primary's node stalled promotion). Prints node names.
+coredns_nodes() { kubectl -n kube-system get pod -l k8s-app=kube-dns -o jsonpath='{range .items[*]}{.spec.nodeName}{" "}{end}' 2>/dev/null | sed 's/ $//'; }
+
+# WAL archive health (L3, ADR-008). archive_stat HOST prints: failed_count last_archived_epoch last_archived_wal
+# ready_count ready_names. pg_ls_archive_statusdir() is granted to pg_monitor, so the monitor role suffices.
+archive_stat() {
+  q "$1" monitor "select a.failed_count, coalesce(extract(epoch from a.last_archived_time), 0), coalesce(a.last_archived_wal, '-'),
+    (select count(*) from pg_ls_archive_statusdir() where name like '%.ready'),
+    coalesce((select string_agg(left(name, 24), ',' order by name) from pg_ls_archive_statusdir() where name like '%.ready'), '-')
+    from pg_stat_archiver a"
+}
+# Fills more than one 16 MB WAL segment through pg-rw, so a segment is closed without waiting for
+# archive_timeout and without a superuser pg_switch_wal().
+wal_fill() {
+  q "$RW" app "create table if not exists harness_walfill (id int, pad text)" >/dev/null &&
+  q "$RW" app "insert into harness_walfill select g, repeat(md5(g::text), 6) from generate_series(1, 80000) g" >/dev/null &&
+  q "$RW" app "drop table harness_walfill" >/dev/null
+}
+# archive_check HOST FAILED_BEFORE BOUND: fills WAL, then waits up to BOUND s for a segment archived after the
+# fill started. Sets ARCH_T (seconds to the archive, or n/a), ARCH_FAILED (failed_count delta), ARCH_STAT.
+archive_check() {
+  local host=$1 f0=$2 bound=$3 t0 end s; t0=$(now); end=$((SECONDS + bound)); ARCH_T=n/a
+  wal_fill || true
+  while [ $SECONDS -lt $end ]; do
+    s=$(archive_stat "$host" 2>/dev/null) || { sleep 1; continue; }
+    awk -v t="$t0" '{exit !($2 > t)}' <<<"$s" && { ARCH_T=$(secs "$t0" "$(awk '{print $2}' <<<"$s")"); break; }
+    sleep 1
+  done
+  ARCH_STAT=$(archive_stat "$host" 2>/dev/null || echo "? 0 - ? -")
+  ARCH_FAILED=$(( $(awk '{print $1}' <<<"$ARCH_STAT" | tr -dc 0-9 | sed 's/^$/0/') - ${f0:-0} ))
+}
+ARCHIVE_BOUND=${ARCHIVE_BOUND:-90}   # archive_timeout 60 s + 30 s margin

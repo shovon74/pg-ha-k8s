@@ -1,0 +1,55 @@
+# L3 (ADR-009): scheduled full backup, expire and verify, from the repository host role. The schedule is
+# filled in by scripts/deploy.sh from BACKUP_SCHEDULE (default daily 20:00 UTC). make backup creates a Job
+# from this same template.
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: pg-backup}
+spec:
+  schedule: __BACKUP_SCHEDULE__        # scripts/deploy.sh substitutes a single-quoted value
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid           # pgBackRest holds a stanza lock; never run two
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      template:
+        metadata: {labels: {app.kubernetes.io/name: pg-backup}}
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          automountServiceAccountToken: false
+          nodeSelector: {pg-ha/role: db}
+          securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: backup
+              image: __PG_IMAGE__
+              imagePullPolicy: IfNotPresent
+              command: [bash, /scripts/backup-job.sh]
+              env:
+                - {name: HOME, value: /tmp}
+              envFrom:
+                - secretRef: {name: pgbackrest-repo}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+              resources:
+                requests: {cpu: 100m, memory: 64Mi}
+                limits: {memory: 512Mi}
+              volumeMounts:
+                - {name: config, mountPath: /etc/pgbackrest, readOnly: true}
+                - {name: tls, mountPath: /etc/pgbackrest-tls, readOnly: true}
+                - {name: scripts, mountPath: /scripts, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: config
+              configMap:
+                name: pg-pgbackrest
+                items:
+                  - {key: job.conf, path: pgbackrest.conf}
+                  - {key: repo.conf, path: conf.d/repo.conf}
+            - name: tls
+              secret: {secretName: pgbackrest-tls, defaultMode: 0440}
+            - name: scripts
+              configMap: {name: pg-scripts, defaultMode: 0555}
+            - {name: tmp, emptyDir: {}}

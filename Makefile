@@ -3,7 +3,8 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help preflight tools certs secrets cluster image up down status clean-secrets \
-        deploy seed test-replication failover-pod failover-node failover-storage test-split-brain switchover test-api-outage spike-s1 spike-s2 spike-s3 spike-s4 spikes
+        deploy backup seed test-replication failover-pod failover-node failover-storage test-split-brain switchover failover-chain test-failover test-api-outage \
+        test-archive test-backup-schedule test-retention test-backup-failover test-garage-restart test-backup spike-s1 spike-s2 spike-s3 spike-s4 spikes
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | expand -t 16
@@ -29,8 +30,11 @@ image: tools ## Build our Postgres image and import it into k3d
 up: preflight tools certs secrets cluster image deploy ## Bootstrap everything built so far
 	@scripts/status.sh
 
-deploy: ## Deploy the Patroni cluster and wait until healthy
+deploy: ## Deploy Garage + Patroni with archiving, create the stanza (BACKUP_SCHEDULE, default '0 20 * * *')
 	@scripts/deploy.sh
+
+backup: ## On-demand full backup, expire and verify, from the pg-backup CronJob template
+	@scripts/pgbr-job.sh pg-backup-manual-$$(date -u +%Y%m%d%H%M%S)
 
 seed: ## Load a synthetic ~150 MB pgbench dataset through pg-rw (SEED_SCALE=10)
 	@scripts/seed.sh
@@ -53,8 +57,30 @@ test-split-brain: ## L2: cut the primary off from the API server only, 3 runs
 switchover: ## Planned switchover to TO=pg-N (default the sync standby), RTO measured
 	@tests/failover.sh switchover
 
+failover-chain: ## L2: node failover, then switchover back to the old primary; archiving must stay healthy
+	@tests/failover-chain.sh
+
+test-failover: failover-pod failover-node failover-storage test-split-brain switchover failover-chain ## L2 gate: all modes
+
 test-api-outage: ## L2 optional: stop the k3d server (API) for OUTAGE=60 s
 	@tests/api-outage.sh
+
+test-archive: ## L3: Garage, repo.conf, WAL archiving, stanza, make backup with verify
+	@tests/l3-archive.sh
+
+test-backup-schedule: ## L3 R4.1: a Job created by the CronJob on a 10-min schedule, then default restored
+	@tests/l3-scheduled.sh
+
+test-retention: ## L3: 3 backups with temporary retention 2, oldest expired with its WAL
+	@tests/l3-retention.sh
+
+test-backup-failover: ## L3 R4.6: one node failover, then archiving + backup + verify on the new timeline
+	@tests/l3-failover.sh
+
+test-garage-restart: ## L3: restart Garage while writing; archiving recovers within a bound
+	@tests/l3-garage-restart.sh
+
+test-backup: test-archive test-backup-schedule test-retention test-backup-failover test-garage-restart ## L3 gate: all of the above
 
 status: ## Show nodes, resource use, Patroni members, lag and the sync standby
 	@scripts/status.sh

@@ -35,7 +35,7 @@
 | O5 Slots | Patroni slots, `max_slot_wal_keep_size=1GB`, alerts | ADR-005 |
 | O6 Fencing | 20/3/5 timing, lock-based demotion + sync replication, no watchdog. "Accepts writes" means **acknowledged commits**. Real RTO is reported per failure mode, with no unsafe tuning | ADR-006 |
 | O7 Endpoints | Patroni-managed `pg-rw`, selector-based `pg-ro`, no pooler | ADR-007 |
-| O8 Rejoin | `pg_rewind` with re-clone fallback | ADR-008 |
+| O8 Rejoin | Re-clone on divergence (L3; was `pg_rewind` with re-clone fallback) | ADR-008 |
 | O9 Backups | pgBackRest, with one `make certs` CA reused for pgBackRest and Postgres TLS. All repository settings live in one `repo.conf` | ADR-009 |
 | O10 Restore | Patroni custom bootstrap, one restore-test Job for CronJob and make | ADR-010 |
 | O11 Observability | Prometheus, Alertmanager, exporters, kube-state-metrics, node_exporter. Grafana out of scope unless every MUST and other SHOULD is done | ADR-011 |
@@ -248,6 +248,8 @@ Also set **`primary_start_timeout: 0`**. The default would spend up to 300 s res
 - `restore_command` lets rewind fetch older WAL from the archive when needed.
 
 **Recommendation: A.** Strongest reason: it gives the fast path while guaranteeing the old primary always returns with no human step.
+
+**Superseded in L3 by B (re-clone on divergence).** Stale old-timeline WAL left by `pg_rewind` blocked WAL archiving after a later promotion. See ADR-008.
 
 ## O9. Backups
 
@@ -517,6 +519,17 @@ Findings from the L0 spikes that later phases must honour. Evidence is in `docs/
 - **L3:** `pgbackrest verify` can exit 0 while reporting `status: error`, so the backup job and alerts must check the reported status and not only the exit code.
 - **L3 watch item:** S1 showed that a connection opened during Garage's first startup can stall for about 135 s, and that a connect timeout with retry bounds it. Whether a **Garage restart** does the same to running clients is untested. L3 must measure WAL archiving across a Garage restart and confirm that pgBackRest's timeouts bound any stalled connection. See `docs/evidence/L0-spike-S1-history.md`.
 - **L4:** `pg_amcheck` needs `--install-missing`. That is acceptable on the scratch restore, but it must not run against production.
+
+### Phase notes from L3
+
+What L3 changes for L4 (restore and PITR). Evidence is in `docs/evidence/L3-backup.md` and `docs/evidence/L3-backup-history.md`.
+
+- **Continuous archive first.** PITR cannot cross a gap in the archive. Before any L4 measurement, confirm archive health (`pg_stat_archiver` with no new failures and a recent `last_archived_time`), then take a fresh full backup. The L3 archiving stall left such a gap until the cluster was rebuilt.
+- **Many timelines.** Failover and switchover tests leave many timelines in the repository. PITR tests must name the target timeline or use `latest`, and confirm that the needed `.history` files are present.
+- **RPO of PITR is the archive lag.** It is up to `archive_timeout` (60 s) on a quiet primary, plus about 60 s more around a Garage restart (pgBackRest's default `io-timeout`, an inferred mechanism). An alert on archive age (L5) must allow for this.
+- **Restores reuse the backup Job's setup.** A restore Job in `pg-restore` can use the same `repo.conf` and the `pgbackrest-repo` Secret. The L0 certificates already cover that namespace. Its pods need cluster DNS, which now runs on the server node.
+- **Promotion fetches history files.** A promoted standby reads timeline history through `restore_command`, which adds about 2 s to node-failure RTO. A restored cluster promoting at its target pays the same cost.
+- **Rejoin is by re-clone** (ADR-008). Restore tests that bring an old primary back must expect a `pg_basebackup`, not `pg_rewind`.
 - **L6:** The API egress policy must allow the API server's **real backend IP and port**. Allowing only the Service IP stays blocked, so the address must be discovered at deploy time.
 
 **SHOULD cut lines**

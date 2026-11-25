@@ -1,0 +1,124 @@
+# L3: Garage object storage for the pgBackRest repository (ADR-014), productionised from spike S1.
+# Single node, replication_factor 1, metadata and data fsync on. Rendered by scripts/garage.sh, which fills
+# in the image. Secrets garage (RPC secret, admin and metrics tokens) and pgbackrest-repo come from ./secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: garage-config}
+data:
+  garage.toml: |
+    metadata_dir = "/data/meta"
+    data_dir = "/data/blocks"
+    db_engine = "lmdb"
+    replication_factor = 1
+    metadata_fsync = true
+    data_fsync = true
+    rpc_bind_addr = "[::]:3901"
+    rpc_public_addr = "127.0.0.1:3901"
+    [s3_api]
+    s3_region = "garage"
+    api_bind_addr = "[::]:3900"
+    [admin]
+    api_bind_addr = "[::]:3903"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: garage-data}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources: {requests: {storage: 5Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: garage}
+spec:
+  selector: {app.kubernetes.io/name: garage}
+  ports:
+  - {name: s3, port: 3900}
+  - {name: admin, port: 3903}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: garage}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}          # one writer on the RWO volume
+  selector: {matchLabels: {app.kubernetes.io/name: garage}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: garage}}
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      # ADR-001: infrastructure runs on the tainted server, away from the database nodes.
+      nodeSelector: {pg-ha/role: infra}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+      - name: garage
+        image: __GARAGE_IMAGE__
+        imagePullPolicy: IfNotPresent
+        envFrom: [{secretRef: {name: garage}}]
+        ports:
+        - {name: s3, containerPort: 3900}
+        - {name: admin, containerPort: 3903}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+        readinessProbe: {tcpSocket: {port: 3900}, periodSeconds: 2}
+        resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {memory: 512Mi}}
+        volumeMounts:
+        - {name: data, mountPath: /data}
+        - {name: config, mountPath: /etc/garage.toml, subPath: garage.toml}
+      volumes:
+      - name: data
+        persistentVolumeClaim: {claimName: garage-data}
+      - name: config
+        configMap: {name: garage-config}
+---
+# Idempotent bootstrap through the Admin API v2: layout, imported key, bucket and grant. Every step checks
+# first, so a rerun against an existing Garage changes nothing. Connect timeouts with retries bound the
+# startup race found in S1 (docs/evidence/L0-spike-S1-history.md).
+apiVersion: batch/v1
+kind: Job
+metadata: {name: garage-bootstrap}
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector: {pg-ha/role: infra}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      securityContext: {runAsNonRoot: true, runAsUser: 100, seccompProfile: {type: RuntimeDefault}}
+      containers:
+      - name: bootstrap
+        image: __CURL_IMAGE__
+        imagePullPolicy: IfNotPresent
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+        env:
+        - {name: TOKEN, valueFrom: {secretKeyRef: {name: garage, key: GARAGE_ADMIN_TOKEN}}}
+        - {name: ACCESS_KEY, valueFrom: {secretKeyRef: {name: pgbackrest-repo, key: PGBACKREST_REPO1_S3_KEY}}}
+        - {name: SECRET_KEY, valueFrom: {secretKeyRef: {name: pgbackrest-repo, key: PGBACKREST_REPO1_S3_KEY_SECRET}}}
+        command: [sh, -ec]
+        args:
+        - |
+          A=http://garage:3903/v2
+          api() { curl -fsS --connect-timeout 3 --max-time 15 --retry 20 --retry-delay 1 --retry-all-errors -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' "$@"; }
+          VER=$(api $A/GetClusterLayout | tr -d ' \n' | sed -nE 's/^\{"version":([0-9]+).*/\1/p')
+          if [ "${VER:-0}" -ge 1 ]; then echo "layout: version $VER exists, kept"; else
+            ID=$(api $A/GetClusterStatus | tr -d ' \n' | sed -E 's/.*"nodes":\[\{"id":"([0-9a-f]{64})".*/\1/')
+            api -o /dev/null -X POST $A/UpdateClusterLayout -d "{\"roles\":[{\"id\":\"$ID\",\"zone\":\"local\",\"capacity\":5000000000,\"tags\":[]}]}"
+            api -o /dev/null -X POST $A/ApplyClusterLayout -d '{"version":1}'
+            echo "layout: version 1 applied"
+          fi
+          # Existence checks: one try each, no retries (Garage is reachable by now). 404 means absent.
+          get() { curl -fsS --connect-timeout 3 --max-time 15 -H "Authorization: Bearer $TOKEN" "$@"; }
+          if get -o /dev/null "$A/GetKeyInfo?id=$ACCESS_KEY" 2>/dev/null; then echo "key: exists, kept"; else
+            api -o /dev/null -X POST $A/ImportKey -d "{\"name\":\"pgbackrest\",\"accessKeyId\":\"$ACCESS_KEY\",\"secretAccessKey\":\"$SECRET_KEY\"}"
+            echo "key: imported"
+          fi
+          if J=$(get "$A/GetBucketInfo?globalAlias=pgbackrest" 2>/dev/null); then echo "bucket: exists, kept"; else
+            J=$(api -X POST $A/CreateBucket -d '{"globalAlias":"pgbackrest"}'); echo "bucket: created"
+          fi
+          B=$(printf '%s' "$J" | tr -d ' \n' | sed -nE 's/^\{"id":"([0-9a-f]{64})".*/\1/p'); [ ${#B} = 64 ]
+          api -o /dev/null -X POST $A/AllowBucketKey -d "{\"bucketId\":\"$B\",\"accessKeyId\":\"$ACCESS_KEY\",\"permissions\":{\"read\":true,\"write\":true,\"owner\":false}}"
+          echo "grant: read and write on bucket pgbackrest"
+          echo BOOTSTRAP_OK

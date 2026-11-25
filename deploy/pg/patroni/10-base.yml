@@ -1,6 +1,6 @@
 # Patroni L1 base config. Per-pod values (name, addresses, passwords) come from environment variables.
-# L3 adds archive_mode, archive_command, restore_command and create_replica_methods in a later file
-# (20-archive.yml), which Patroni merges over this one.
+# L3 adds archive_mode, archive_command and restore_command in a later file (20-archive.yml), which
+# Patroni merges over this one.
 scope: pg-rw            # Patroni names the leader Endpoints after the scope, so this is the pg-rw Service
 restapi:
   listen: 0.0.0.0:8008
@@ -20,7 +20,7 @@ bootstrap:
     synchronous_mode_strict: false
     synchronous_node_count: 1
     postgresql:
-      use_pg_rewind: true           # ADR-008
+      use_pg_rewind: false          # ADR-008 (L3): rejoin by re-clone, see remove_data_directory_on_diverged_timelines
       use_slots: true               # ADR-005
       parameters:
         wal_level: replica
@@ -43,7 +43,10 @@ postgresql:
   bin_dir: /usr/lib/postgresql/17/bin
   pgpass: /tmp/pgpass
   use_unix_socket: true
-  remove_data_directory_on_rewind_failure: true   # ADR-008: re-clone if pg_rewind fails
+  # ADR-008 (L3): a diverged member is re-cloned with pg_basebackup instead of rewound. pg_rewind copied WAL
+  # files without archive status, and after a later promotion they blocked archiving ("different checksum").
+  # The divergence check still connects as the rewind role.
+  remove_data_directory_on_diverged_timelines: true
   parameters:
     unix_socket_directories: /var/run/postgresql
     # Server TLS on with the L0 certificate. hostssl enforcement waits for L6.

@@ -74,6 +74,9 @@ spec:
               valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-app-password}}
             - name: PG_APP_RO_PASSWORD
               valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-app_ro-password}}
+          # L3: archive-push and archive-get read the repository credentials and cipher passphrase from here.
+          envFrom:
+            - secretRef: {name: pgbackrest-repo}
           readinessProbe:
             httpGet: {path: /readiness, port: 8008}
             periodSeconds: 3
@@ -97,6 +100,30 @@ spec:
             - {name: patroni-config, mountPath: /etc/patroni/conf.d, readOnly: true}
             - {name: scripts, mountPath: /etc/patroni/scripts, readOnly: true}
             - {name: tls, mountPath: /etc/pg-tls, readOnly: true}
+            - {name: pgbackrest-config, mountPath: /etc/pgbackrest, readOnly: true}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+        # L3 (ADR-009): pgBackRest TLS server, so the stanza and backup Jobs reach this member without exec.
+        # It reads PGDATA and talks to Postgres over the shared socket. It never touches the repository.
+        - name: pgbackrest
+          image: __PG_IMAGE__
+          imagePullPolicy: IfNotPresent
+          command: [pgbackrest, server]
+          ports:
+            - {name: pgbackrest, containerPort: 8432}
+          env:
+            - {name: HOME, value: /tmp}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: pgbackrest-server-config, mountPath: /etc/pgbackrest, readOnly: true}
+            - {name: pgbackrest-tls, mountPath: /etc/pgbackrest-tls, readOnly: true}
             - {name: run, mountPath: /var/run/postgresql}
             - {name: tmp, mountPath: /tmp}
       volumes:
@@ -106,6 +133,20 @@ spec:
           configMap: {name: pg-scripts, defaultMode: 0555}
         - name: tls
           secret: {secretName: pg-tls, defaultMode: 0440}
+        - name: pgbackrest-config
+          configMap:
+            name: pg-pgbackrest
+            items:
+              - {key: db.conf, path: pgbackrest.conf}
+              - {key: repo.conf, path: conf.d/repo.conf}
+        # The TLS server gets no repo.conf: it never reads the repository, and so never needs its credentials.
+        - name: pgbackrest-server-config
+          configMap:
+            name: pg-pgbackrest
+            items:
+              - {key: db.conf, path: pgbackrest.conf}
+        - name: pgbackrest-tls
+          secret: {secretName: pgbackrest-tls, defaultMode: 0440}
         - {name: run, emptyDir: {}}
         - {name: tmp, emptyDir: {}}
   volumeClaimTemplates:

@@ -1,0 +1,12 @@
+# L3: WAL archiving through pgBackRest (ADR-009), merged over 10-base.yml. archive_mode needs a restart,
+# which the StatefulSet rollout provides because this file changes the ConfigMap hash.
+postgresql:
+  parameters:
+    archive_mode: "on"
+    archive_command: pgbackrest --stanza=main archive-push "%p"
+    archive_timeout: 60s        # bounds the WAL not yet archived on a quiet primary (PITR, L4)
+  recovery_conf:
+    # Replicas and pg_rewind can fetch WAL that the primary no longer holds (ADR-005, T:slot-bound).
+    # Synchronous archive-get, so each call returns as soon as the repository answers: the startup process
+    # notices a promote request only between restore_command calls (docs/evidence/L3-backup-history.md).
+    restore_command: pgbackrest --stanza=main --no-archive-async archive-get %f "%p"
