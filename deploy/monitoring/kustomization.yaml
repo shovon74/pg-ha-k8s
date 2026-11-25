@@ -1,0 +1,21 @@
+# L5 (ADR-011): monitoring stack from our own manifests. Rendered by scripts/monitoring.sh, which fills in
+# the pinned images from versions.env. Objects name their own namespaces (monitoring, monitoring-host, and
+# Roles in pg-ha and kube-system), so no namespace is set here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - prometheus.yaml
+  - alertmanager.yaml
+  - kube-state-metrics.yaml
+  - node-exporter.yaml
+configMapGenerator:
+  - name: prometheus-config
+    namespace: monitoring
+    files: [prometheus.yml]
+  - name: prometheus-rules
+    namespace: monitoring
+    files: [rules/pg-ha.rules.yml]
+  - name: alertmanager-config
+    namespace: monitoring
+    files: [alertmanager.yml]

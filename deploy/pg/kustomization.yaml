@@ -18,5 +18,8 @@ configMapGenerator:
   # ADR-009: repo.conf holds every repo1-* setting; db.conf and job.conf hold the rest.
   - name: pg-pgbackrest
     files: [pgbackrest/repo.conf, pgbackrest/db.conf, pgbackrest/job.conf, pgbackrest/restore-test.conf]
+  # L5 (ADR-011): custom queries for the postgres_exporter sidecar.
+  - name: pg-exporter-queries
+    files: [exporter/queries.yaml]
   - name: pg-scripts
     files: [scripts/post-bootstrap.sh, scripts/backup-job.sh, scripts/restore-bootstrap.sh, scripts/restore-test.sh, scripts/fingerprint.sql]

@@ -1,0 +1,350 @@
+# L5 (R10.2): promtool unit tests for every alert in deploy/monitoring/rules/pg-ha.rules.yml.
+# Run with: make test-alerts (scripts/test-alerts.sh, pinned Prometheus image). The runner removes the
+# annotations from a temporary copy of the rules, so these tests check labels and timing only. It checks
+# separately that every rule has a severity, a summary and a why.
+# Each alert has at least one "fires" case and one "does not fire" case. Series in namespace pg-restore stand
+# for a restored cluster and must never fire. promtool time starts at 0 (epoch), so time() equals eval_time.
+rule_files: [pg-ha.rules.yml]
+evaluation_interval: 15s
+
+tests:
+  # ---------- NoPrimary ----------
+  - name: NoPrimary fires when no member is primary for longer than 45 s; pg-restore is ignored
+    interval: 15s
+    input_series:
+      - {series: 'patroni_primary{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '1x4 0x20'}
+      - {series: 'patroni_primary{job="patroni",namespace="pg-ha",pod="pg-1"}', values: '0x24'}
+      - {series: 'patroni_primary{job="patroni",namespace="pg-restore",pod="pg-0"}', values: '0x24'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: NoPrimary, exp_alerts: []}
+      - {eval_time: 2m30s, alertname: NoPrimary, exp_alerts: [{exp_labels: {severity: critical, namespace: pg-ha}}]}
+  - name: NoPrimary does not fire for a 30 s failover
+    interval: 15s
+    input_series:
+      - {series: 'patroni_primary{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '1x4 0x20'}
+      - {series: 'patroni_primary{job="patroni",namespace="pg-ha",pod="pg-1"}', values: '0x6 1x18'}
+    alert_rule_test:
+      - {eval_time: 1m30s, alertname: NoPrimary, exp_alerts: []}
+      - {eval_time: 3m, alertname: NoPrimary, exp_alerts: []}
+  - name: NoPrimary fires when no Patroni metrics exist at all
+    interval: 15s
+    input_series:
+      - {series: 'up{job="prometheus"}', values: '1x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: NoPrimary, exp_alerts: [{exp_labels: {severity: critical, namespace: pg-ha}}]}
+
+  # ---------- MultiplePrimaries ----------
+  - name: MultiplePrimaries fires when two members are primary for 20 s, not on a one-scrape overlap
+    interval: 15s
+    input_series:
+      - {series: 'patroni_primary{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '1x30'}
+      - {series: 'patroni_primary{job="patroni",namespace="pg-ha",pod="pg-1"}', values: '0x4 1 0x6 1x18'}
+      - {series: 'patroni_primary{job="patroni",namespace="pg-restore",pod="pg-1"}', values: '1x30'}
+    alert_rule_test:
+      - {eval_time: 1m30s, alertname: MultiplePrimaries, exp_alerts: []}
+      - {eval_time: 4m, alertname: MultiplePrimaries, exp_alerts: [{exp_labels: {severity: critical, namespace: pg-ha}}]}
+  - name: MultiplePrimaries fires when two Postgres servers accept writes
+    interval: 15s
+    input_series:
+      - {series: 'patroni_primary{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '1x10'}
+      - {series: 'pg_replication_is_replica{job="postgres",namespace="pg-ha",pod="pg-0"}', values: '0x10'}
+      - {series: 'pg_replication_is_replica{job="postgres",namespace="pg-ha",pod="pg-1"}', values: '0x10'}
+      - {series: 'pg_replication_is_replica{job="postgres",namespace="pg-ha",pod="pg-2"}', values: '1x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: MultiplePrimaries, exp_alerts: [{exp_labels: {severity: critical, namespace: pg-ha}}]}
+
+  # ---------- MemberDown ----------
+  - name: MemberDown fires for a failed scrape, a stopped Postgres and a missing pod
+    interval: 15s
+    input_series:
+      - {series: 'up{job="patroni",namespace="pg-ha",pod="pg-0",instance="pg-0"}', values: '1x20'}
+      - {series: 'up{job="patroni",namespace="pg-ha",pod="pg-1",instance="pg-1"}', values: '1x4 0x16'}
+      - {series: 'up{job="patroni",namespace="pg-ha",pod="pg-2",instance="pg-2"}', values: '1x20'}
+      - {series: 'patroni_postgres_running{job="patroni",namespace="pg-ha",pod="pg-0",instance="pg-0"}', values: '1x20'}
+      - {series: 'patroni_postgres_running{job="patroni",namespace="pg-ha",pod="pg-2",instance="pg-2"}', values: '1x4 0x16'}
+      - {series: 'kube_statefulset_replicas{job="kube-state-metrics",namespace="pg-ha",statefulset="pg"}', values: '3x20'}
+      - {series: 'up{job="patroni",namespace="pg-restore",pod="pg-0",instance="pg-0"}', values: '0x20'}
+    alert_rule_test:
+      - {eval_time: 1m15s, alertname: MemberDown, exp_alerts: []}
+      - eval_time: 2m
+        alertname: MemberDown
+        exp_alerts:
+          - {exp_labels: {severity: warning, job: patroni, namespace: pg-ha, pod: pg-1, instance: pg-1}}
+          - {exp_labels: {severity: warning, job: patroni, namespace: pg-ha, pod: pg-2, instance: pg-2}}
+          - {exp_labels: {severity: warning, namespace: pg-ha}}
+  - name: MemberDown does not fire for a 30 s pod restart
+    interval: 15s
+    input_series:
+      - {series: 'up{job="patroni",namespace="pg-ha",pod="pg-0",instance="pg-0"}', values: '1x20'}
+      - {series: 'up{job="patroni",namespace="pg-ha",pod="pg-1",instance="pg-1"}', values: '1x4 0 0 1x14'}
+      - {series: 'up{job="patroni",namespace="pg-ha",pod="pg-2",instance="pg-2"}', values: '1x20'}
+      - {series: 'kube_statefulset_replicas{job="kube-state-metrics",namespace="pg-ha",statefulset="pg"}', values: '3x20'}
+    alert_rule_test:
+      - {eval_time: 1m30s, alertname: MemberDown, exp_alerts: []}
+      - {eval_time: 3m, alertname: MemberDown, exp_alerts: []}
+
+  # ---------- ReplicaNotStreaming ----------
+  - name: ReplicaNotStreaming fires when one standby stops streaming for 2 min
+    interval: 15s
+    input_series:
+      - {series: 'patroni_postgres_streaming{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '0x30'}
+      - {series: 'patroni_postgres_streaming{job="patroni",namespace="pg-ha",pod="pg-1"}', values: '1x30'}
+      - {series: 'patroni_postgres_streaming{job="patroni",namespace="pg-ha",pod="pg-2"}', values: '1x4 0x26'}
+      - {series: 'kube_statefulset_replicas{job="kube-state-metrics",namespace="pg-ha",statefulset="pg"}', values: '3x30'}
+    alert_rule_test:
+      - {eval_time: 2m30s, alertname: ReplicaNotStreaming, exp_alerts: []}
+      - {eval_time: 3m30s, alertname: ReplicaNotStreaming, exp_alerts: [{exp_labels: {severity: warning, namespace: pg-ha}}]}
+  - name: ReplicaNotStreaming fires when no standby streams at all
+    interval: 15s
+    input_series:
+      - {series: 'patroni_postgres_streaming{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '0x30'}
+      - {series: 'patroni_postgres_streaming{job="patroni",namespace="pg-ha",pod="pg-1"}', values: '0x30'}
+      - {series: 'kube_statefulset_replicas{job="kube-state-metrics",namespace="pg-ha",statefulset="pg"}', values: '3x30'}
+    alert_rule_test:
+      - {eval_time: 3m, alertname: ReplicaNotStreaming, exp_alerts: [{exp_labels: {severity: warning, namespace: pg-ha}}]}
+  - name: ReplicaNotStreaming does not fire for a 1 min re-clone
+    interval: 15s
+    input_series:
+      - {series: 'patroni_postgres_streaming{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '0x30'}
+      - {series: 'patroni_postgres_streaming{job="patroni",namespace="pg-ha",pod="pg-1"}', values: '1x30'}
+      - {series: 'patroni_postgres_streaming{job="patroni",namespace="pg-ha",pod="pg-2"}', values: '1x4 0x4 1x22'}
+      - {series: 'kube_statefulset_replicas{job="kube-state-metrics",namespace="pg-ha",statefulset="pg"}', values: '3x30'}
+    alert_rule_test:
+      - {eval_time: 2m, alertname: ReplicaNotStreaming, exp_alerts: []}
+      - {eval_time: 4m, alertname: ReplicaNotStreaming, exp_alerts: []}
+
+  # ---------- ReplicationLagHigh (bytes and seconds) ----------
+  - name: ReplicationLagHigh fires on sustained lag in bytes and in seconds
+    interval: 15s
+    input_series:
+      - {series: 'pg_ha_replication_lag_bytes{job="postgres",namespace="pg-ha",pod="pg-0",application_name="pg-1",state="streaming",sync_state="sync"}', values: '0x4 20000000x20'}
+      - {series: 'pg_ha_replication_replay_lag_seconds{job="postgres",namespace="pg-ha",pod="pg-0",application_name="pg-2",state="streaming",sync_state="async"}', values: '0x4 45x20'}
+      - {series: 'pg_ha_replication_lag_bytes{job="postgres",namespace="pg-restore",pod="pg-0",application_name="pg-1",state="streaming",sync_state="sync"}', values: '99000000x24'}
+    alert_rule_test:
+      - {eval_time: 2m30s, alertname: ReplicationLagHigh, exp_alerts: []}
+      - eval_time: 3m30s
+        alertname: ReplicationLagHigh
+        exp_alerts:
+          - {exp_labels: {severity: warning, lag: bytes, namespace: pg-ha, application_name: pg-1}}
+          - {exp_labels: {severity: warning, lag: seconds, namespace: pg-ha, application_name: pg-2}}
+  - name: ReplicationLagHigh does not fire on small lag or a 1 min burst
+    interval: 15s
+    input_series:
+      - {series: 'pg_ha_replication_lag_bytes{job="postgres",namespace="pg-ha",pod="pg-0",application_name="pg-1",state="streaming",sync_state="sync"}', values: '8000000x24'}
+      - {series: 'pg_ha_replication_lag_bytes{job="postgres",namespace="pg-ha",pod="pg-0",application_name="pg-2",state="streaming",sync_state="async"}', values: '0x4 90000000x4 0x16'}
+      - {series: 'pg_ha_replication_replay_lag_seconds{job="postgres",namespace="pg-ha",pod="pg-0",application_name="pg-1",state="streaming",sync_state="sync"}', values: '10x24'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: ReplicationLagHigh, exp_alerts: []}
+
+  # ---------- SyncStandbyMissing ----------
+  - name: SyncStandbyMissing fires after 1 min without a sync standby, not after 45 s
+    interval: 15s
+    input_series:
+      - {series: 'patroni_primary{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '1x30'}
+      - {series: 'patroni_sync_standby{job="patroni",namespace="pg-ha",pod="pg-1"}', values: '1x4 0x3 1x4 0x18'}
+      - {series: 'patroni_sync_standby{job="patroni",namespace="pg-ha",pod="pg-2"}', values: '0x30'}
+    alert_rule_test:
+      - {eval_time: 2m, alertname: SyncStandbyMissing, exp_alerts: []}
+      - {eval_time: 4m30s, alertname: SyncStandbyMissing, exp_alerts: [{exp_labels: {severity: critical, namespace: pg-ha}}]}
+  - name: SyncStandbyMissing stays silent when there is no primary (NoPrimary covers it)
+    interval: 15s
+    input_series:
+      - {series: 'patroni_primary{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '0x20'}
+      - {series: 'patroni_sync_standby{job="patroni",namespace="pg-ha",pod="pg-1"}', values: '0x20'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: SyncStandbyMissing, exp_alerts: []}
+
+  # ---------- SlotWALRetentionHigh / SlotLost ----------
+  - name: SlotWALRetentionHigh fires above 512 MiB for 5 min, not at 400 MB
+    interval: 15s
+    input_series:
+      - {series: 'pg_ha_slot_retained_bytes{job="postgres",namespace="pg-ha",pod="pg-0",slot_name="pg_1",slot_type="physical"}', values: '0x4 600000000x30'}
+      - {series: 'pg_ha_slot_retained_bytes{job="postgres",namespace="pg-ha",pod="pg-0",slot_name="pg_2",slot_type="physical"}', values: '400000000x34'}
+      - {series: 'pg_ha_slot_retained_bytes{job="postgres",namespace="pg-restore",pod="pg-0",slot_name="pg_1",slot_type="physical"}', values: '900000000x34'}
+    alert_rule_test:
+      - {eval_time: 5m, alertname: SlotWALRetentionHigh, exp_alerts: []}
+      - {eval_time: 7m, alertname: SlotWALRetentionHigh, exp_alerts: [{exp_labels: {severity: warning, namespace: pg-ha, pod: pg-0, slot_name: pg_1}}]}
+  - name: SlotLost fires on an invalidated slot only
+    interval: 15s
+    input_series:
+      - {series: 'pg_ha_slot_lost{job="postgres",namespace="pg-ha",pod="pg-0",slot_name="pg_1",slot_type="physical"}', values: '0x4 1x10'}
+      - {series: 'pg_ha_slot_lost{job="postgres",namespace="pg-ha",pod="pg-0",slot_name="pg_2",slot_type="physical"}', values: '0x14'}
+      - {series: 'pg_ha_slot_lost{job="postgres",namespace="pg-restore",pod="pg-0",slot_name="pg_1",slot_type="physical"}', values: '1x14'}
+    alert_rule_test:
+      - {eval_time: 30s, alertname: SlotLost, exp_alerts: []}
+      - {eval_time: 1m30s, alertname: SlotLost, exp_alerts: [{exp_labels: {severity: warning, namespace: pg-ha, pod: pg-0, slot_name: pg_1}}]}
+
+  # ---------- FailoverOccurred ----------
+  - name: FailoverOccurred fires for 5 min after the timeline increases
+    interval: 15s
+    input_series:
+      - {series: 'patroni_postgres_timeline{job="patroni",namespace="pg-ha",pod="pg-0"}', values: '5x30 6x40'}
+      - {series: 'patroni_postgres_timeline{job="patroni",namespace="pg-restore",pod="pg-0"}', values: '5x30 9x40'}
+    alert_rule_test:
+      - {eval_time: 6m, alertname: FailoverOccurred, exp_alerts: []}
+      - {eval_time: 8m, alertname: FailoverOccurred, exp_alerts: [{exp_labels: {severity: info, namespace: pg-ha}}]}
+      - {eval_time: 14m, alertname: FailoverOccurred, exp_alerts: []}
+
+  # ---------- ArchiveFailing ----------
+  - name: ArchiveFailing fires when failed_count rises, not when it is flat or reset by a restart
+    interval: 15s
+    input_series:
+      - {series: 'pg_stat_archiver_failed_count{job="postgres",namespace="pg-ha",pod="pg-0"}', values: '0x8 1 2 3 3x30'}
+      - {series: 'pg_stat_archiver_failed_count{job="postgres",namespace="pg-ha",pod="pg-1"}', values: '5x41'}
+      - {series: 'pg_stat_archiver_failed_count{job="postgres",namespace="pg-ha",pod="pg-2"}', values: '5x8 0x32'}
+      - {series: 'pg_stat_archiver_failed_count{job="postgres",namespace="pg-restore",pod="pg-0"}', values: '0+1x40'}
+    alert_rule_test:
+      - {eval_time: 1m30s, alertname: ArchiveFailing, exp_alerts: []}
+      - {eval_time: 3m, alertname: ArchiveFailing, exp_alerts: [{exp_labels: {severity: warning, job: postgres, namespace: pg-ha, pod: pg-0}}]}
+      - {eval_time: 8m30s, alertname: ArchiveFailing, exp_alerts: []}
+
+  # ---------- ArchiveStale ----------
+  - name: ArchiveStale fires when a ready segment waits more than 120 s; an idle cluster stays silent
+    interval: 15s
+    input_series:
+      - {series: 'pg_ha_archive_oldest_ready_seconds{job="postgres",namespace="pg-ha",pod="pg-0"}', values: '0x4 0+15x20'}
+      - {series: 'pg_ha_archive_oldest_ready_seconds{job="postgres",namespace="pg-ha",pod="pg-1"}', values: '0x24'}
+      - {series: 'pg_ha_archive_oldest_ready_seconds{job="postgres",namespace="pg-restore",pod="pg-0"}', values: '0+15x24'}
+    alert_rule_test:
+      - {eval_time: 3m, alertname: ArchiveStale, exp_alerts: []}
+      - {eval_time: 3m30s, alertname: ArchiveStale, exp_alerts: [{exp_labels: {severity: critical, namespace: pg-ha, pod: pg-0}}]}
+
+  # ---------- BackupFailed ----------
+  - name: BackupFailed fires when the newest backup Job failed
+    interval: 15s
+    input_series:
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-backup-1"}', values: '1000x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-backup-1"}', values: '1x10'}
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-backup-2"}', values: '2000x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-backup-2"}', values: '0x10'}
+      - {series: 'kube_job_failed{namespace="pg-ha",job_name="pg-backup-2",condition="true"}', values: '1x10'}
+      - {series: 'kube_job_failed{namespace="pg-ha",job_name="pg-backup-2",condition="false"}', values: '0x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: BackupFailed, exp_alerts: [{exp_labels: {severity: warning, namespace: pg-ha}}]}
+  - name: BackupFailed fires when no backup Job ever succeeded and one failed
+    interval: 15s
+    input_series:
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-backup-1"}', values: '1000x10'}
+      - {series: 'kube_job_failed{namespace="pg-ha",job_name="pg-backup-1",condition="true"}', values: '1x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: BackupFailed, exp_alerts: [{exp_labels: {severity: warning, namespace: pg-ha}}]}
+  - name: BackupFailed clears once a newer backup Job succeeds; other Jobs and pg-restore are ignored
+    interval: 15s
+    input_series:
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-backup-2"}', values: '2000x10'}
+      - {series: 'kube_job_failed{namespace="pg-ha",job_name="pg-backup-2",condition="true"}', values: '1x10'}
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-backup-3"}', values: '3000x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-backup-3"}', values: '1x10'}
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-stanza-create"}', values: '4000x10'}
+      - {series: 'kube_job_failed{namespace="pg-ha",job_name="pg-stanza-create",condition="true"}', values: '1x10'}
+      - {series: 'kube_job_created{namespace="pg-restore",job_name="pg-backup-9"}', values: '5000x10'}
+      - {series: 'kube_job_failed{namespace="pg-restore",job_name="pg-backup-9",condition="true"}', values: '1x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: BackupFailed, exp_alerts: []}
+
+  # ---------- BackupStale (time() = eval_time; negative timestamps are "hours before the test") ----------
+  - name: BackupStale fires when the last backup success is older than 26 h, even if a stanza Job just succeeded
+    interval: 15s
+    input_series:
+      - {series: 'kube_job_status_completion_time{namespace="pg-ha",job_name="pg-stanza-create"}', values: '-60x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-stanza-create"}', values: '1x10'}
+      - {series: 'kube_cronjob_status_last_successful_time{namespace="pg-ha",cronjob="pg-backup"}', values: '-60x10'}
+      - {series: 'kube_job_status_completion_time{namespace="pg-ha",job_name="pg-backup-1"}', values: '-100000x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-backup-1"}', values: '1x10'}
+      - {series: 'kube_cronjob_created{namespace="pg-ha",cronjob="pg-backup"}', values: '-200000x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: BackupStale, exp_alerts: [{exp_labels: {severity: critical, namespace: pg-ha}}]}
+  - name: BackupStale is silent when a backup Job succeeded 1 h ago; a recent stanza Job and the CronJob's lastSuccessfulTime do not count
+    interval: 15s
+    input_series:
+      - {series: 'kube_job_status_completion_time{namespace="pg-ha",job_name="pg-backup-1"}', values: '-100000x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-backup-1"}', values: '1x10'}
+      - {series: 'kube_job_status_completion_time{namespace="pg-ha",job_name="pg-backup-2"}', values: '-3600x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-backup-2"}', values: '1x10'}
+      - {series: 'kube_cronjob_created{namespace="pg-ha",cronjob="pg-backup"}', values: '-200000x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: BackupStale, exp_alerts: []}
+  - name: BackupStale gives a new cluster 26 h, then fires if no backup ever succeeded
+    interval: 15s
+    input_series:
+      - {series: 'kube_cronjob_created{namespace="pg-ha",cronjob="pg-backup"}', values: '0x10'}
+      - {series: 'kube_cronjob_created{namespace="pg-ha",cronjob="pg-restore-test"}', values: '-100000x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: BackupStale, exp_alerts: []}
+  - name: BackupStale fires for an old CronJob that never succeeded
+    interval: 15s
+    input_series:
+      - {series: 'kube_cronjob_created{namespace="pg-ha",cronjob="pg-backup"}', values: '-100000x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: BackupStale, exp_alerts: [{exp_labels: {severity: critical, namespace: pg-ha}}]}
+
+  # ---------- RestoreTestFailed / RestoreTestStale ----------
+  - name: RestoreTestFailed fires when the newest restore test failed, including an on-demand one
+    interval: 15s
+    input_series:
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-restore-test-29927025"}', values: '1000x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-restore-test-29927025"}', values: '1x10'}
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-restore-test"}', values: '2000x10'}
+      - {series: 'kube_job_failed{namespace="pg-ha",job_name="pg-restore-test",condition="true"}', values: '1x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: RestoreTestFailed, exp_alerts: [{exp_labels: {severity: warning, namespace: pg-ha}}]}
+  - name: RestoreTestFailed clears after a newer success; a failed backup Job does not trigger it
+    interval: 15s
+    input_series:
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-restore-test-1"}', values: '1000x10'}
+      - {series: 'kube_job_failed{namespace="pg-ha",job_name="pg-restore-test-1",condition="true"}', values: '1x10'}
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-restore-test-2"}', values: '2000x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-restore-test-2"}', values: '1x10'}
+      - {series: 'kube_job_created{namespace="pg-ha",job_name="pg-backup-5"}', values: '3000x10'}
+      - {series: 'kube_job_failed{namespace="pg-ha",job_name="pg-backup-5",condition="true"}', values: '1x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: RestoreTestFailed, exp_alerts: []}
+  - name: RestoreTestStale fires after 26 h without success, silent after a recent one
+    interval: 15s
+    input_series:
+      - {series: 'kube_job_status_completion_time{namespace="pg-ha",job_name="pg-restore-test-1"}', values: '-100000x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-restore-test-1"}', values: '1x10'}
+      - {series: 'kube_cronjob_created{namespace="pg-ha",cronjob="pg-restore-test"}', values: '-200000x10'}
+      - {series: 'kube_job_status_completion_time{namespace="pg-restore",job_name="pg-restore-test-1"}', values: '-3600x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: RestoreTestStale, exp_alerts: [{exp_labels: {severity: warning, namespace: pg-ha}}]}
+  - name: RestoreTestStale is silent after a success 2 h ago
+    interval: 15s
+    input_series:
+      - {series: 'kube_job_status_completion_time{namespace="pg-ha",job_name="pg-restore-test-1"}', values: '-7200x10'}
+      - {series: 'kube_job_status_succeeded{namespace="pg-ha",job_name="pg-restore-test-1"}', values: '1x10'}
+      - {series: 'kube_cronjob_created{namespace="pg-ha",cronjob="pg-restore-test"}', values: '-200000x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: RestoreTestStale, exp_alerts: []}
+
+  # ---------- DiskLow ----------
+  - name: DiskLow fires below 15% free for 5 min, not at 50%
+    interval: 15s
+    input_series:
+      - {series: 'node_filesystem_avail_bytes{job="node",instance="k3d-pg-ha-agent-0",node="k3d-pg-ha-agent-0",device="overlay",fstype="overlay",mountpoint="/"}', values: '10x30'}
+      - {series: 'node_filesystem_size_bytes{job="node",instance="k3d-pg-ha-agent-0",node="k3d-pg-ha-agent-0",device="overlay",fstype="overlay",mountpoint="/"}', values: '100x30'}
+      - {series: 'node_filesystem_avail_bytes{job="node",instance="k3d-pg-ha-agent-1",node="k3d-pg-ha-agent-1",device="overlay",fstype="overlay",mountpoint="/"}', values: '50x30'}
+      - {series: 'node_filesystem_size_bytes{job="node",instance="k3d-pg-ha-agent-1",node="k3d-pg-ha-agent-1",device="overlay",fstype="overlay",mountpoint="/"}', values: '100x30'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: DiskLow, exp_alerts: []}
+      - {eval_time: 6m, alertname: DiskLow, exp_alerts: [{exp_labels: {severity: warning, job: node, instance: k3d-pg-ha-agent-0, node: k3d-pg-ha-agent-0, device: overlay, fstype: overlay, mountpoint: /}}]}
+
+  # ---------- CoreDNSNotReady ----------
+  - name: CoreDNSNotReady fires after 1 min unavailable, not for a 15 s restart
+    interval: 15s
+    input_series:
+      - {series: 'kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="kube-system",deployment="coredns"}', values: '1x4 0 1x4 0x10'}
+    alert_rule_test:
+      - {eval_time: 2m, alertname: CoreDNSNotReady, exp_alerts: []}
+      - {eval_time: 4m, alertname: CoreDNSNotReady, exp_alerts: [{exp_labels: {severity: critical, job: kube-state-metrics, namespace: kube-system, deployment: coredns}}]}
+
+  # ---------- MonitoringTargetDown ----------
+  - name: MonitoringTargetDown fires after 5 min, not for a 1 min outage or a Postgres target
+    interval: 15s
+    input_series:
+      - {series: 'up{job="node",instance="k3d-pg-ha-agent-0"}', values: '1x4 0x30'}
+      - {series: 'up{job="kube-state-metrics",instance="kube-state-metrics.monitoring.svc:8080"}', values: '1x4 0x4 1x26'}
+      - {series: 'up{job="postgres",namespace="pg-ha",pod="pg-0",instance="pg-0"}', values: '0x34'}
+    alert_rule_test:
+      - {eval_time: 5m, alertname: MonitoringTargetDown, exp_alerts: []}
+      - {eval_time: 6m30s, alertname: MonitoringTargetDown, exp_alerts: [{exp_labels: {severity: warning, job: node, instance: k3d-pg-ha-agent-0}}]}

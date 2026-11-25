@@ -126,7 +126,34 @@ spec:
             - {name: pgbackrest-tls, mountPath: /etc/pgbackrest-tls, readOnly: true}
             - {name: run, mountPath: /var/run/postgresql}
             - {name: tmp, mountPath: /tmp}
+        # L5 (ADR-011): postgres_exporter. Connects over TCP to 127.0.0.1 as the monitor role (pg_monitor),
+        # because pg_hba allows the local socket for peer auth only. sslmode=require keeps it working once L6
+        # enforces hostssl. Patroni's own metrics are on the patroni port (8008, /metrics).
+        - name: exporter
+          image: __POSTGRES_EXPORTER_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args:
+            - --web.listen-address=:9187
+            - --extend.query-path=/etc/postgres-exporter/queries.yaml
+          ports:
+            - {name: metrics, containerPort: 9187}
+          env:
+            - {name: DATA_SOURCE_URI, value: "127.0.0.1:5432/postgres?sslmode=require&connect_timeout=3"}
+            - {name: DATA_SOURCE_USER, value: monitor}
+            - name: DATA_SOURCE_PASS
+              valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-monitor-password}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 24Mi}
+            limits: {memory: 96Mi}
+          volumeMounts:
+            - {name: exporter-queries, mountPath: /etc/postgres-exporter, readOnly: true}
       volumes:
+        - name: exporter-queries
+          configMap: {name: pg-exporter-queries}
         - name: patroni-config
           configMap: {name: pg-patroni}
         - name: scripts

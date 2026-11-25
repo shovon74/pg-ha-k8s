@@ -1,0 +1,10 @@
+# L5 (ADR-011): every alert goes to a receiver with no integrations. Nothing is sent anywhere, and no secret
+# is needed. A real deployment would add a receiver here (docs/observability.md).
+route:
+  receiver: none
+  group_by: [alertname, namespace]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+receivers:
+  - name: none

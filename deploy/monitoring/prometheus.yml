@@ -1,0 +1,67 @@
+# L5 (ADR-011): Prometheus configuration. Only the pg-ha namespace is scraped for Postgres, so a restored
+# cluster in pg-restore is never scraped. The alert rules are scoped to namespace="pg-ha" as well.
+global:
+  scrape_interval: 10s
+  scrape_timeout: 5s
+  evaluation_interval: 10s
+
+alerting:
+  alertmanagers:
+    - static_configs: [{targets: ["alertmanager.monitoring.svc:9093"]}]
+
+rule_files: [/etc/prometheus/rules/*.yml]
+
+scrape_configs:
+  # Patroni REST API /metrics on each member (role, timeline, streaming, sync standby).
+  - job_name: patroni
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [pg-ha]}
+        selectors: [{role: pod, label: "app.kubernetes.io/name=pg"}]
+    relabel_configs:
+      - {source_labels: [__meta_kubernetes_pod_container_port_name], regex: patroni, action: keep}
+      - {source_labels: [__meta_kubernetes_namespace], target_label: namespace}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: instance}
+
+  # postgres_exporter sidecar on each member (pg_stat_archiver, custom pg_ha_* queries).
+  - job_name: postgres
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [pg-ha]}
+        selectors: [{role: pod, label: "app.kubernetes.io/name=pg"}]
+    relabel_configs:
+      - {source_labels: [__meta_kubernetes_pod_container_port_name], regex: metrics, action: keep}
+      - {source_labels: [__meta_kubernetes_namespace], target_label: namespace}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: instance}
+    metric_relabel_configs:
+      - {regex: server, action: labeldrop}     # always 127.0.0.1:5432, adds nothing
+
+  # node_exporter DaemonSet (disk space, memory).
+  - job_name: node
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [monitoring-host]}
+    relabel_configs:
+      - {source_labels: [__meta_kubernetes_pod_container_port_name], regex: metrics, action: keep}
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: instance}
+
+  # kube-state-metrics: Job, CronJob, StatefulSet and Deployment state in pg-ha and kube-system.
+  # honor_labels keeps the object's own namespace label.
+  - job_name: kube-state-metrics
+    honor_labels: true
+    static_configs: [{targets: ["kube-state-metrics.monitoring.svc:8080"]}]
+
+  # kube-state-metrics' own process metrics (memory), kept apart from the object metrics above.
+  - job_name: kube-state-metrics-self
+    static_configs: [{targets: ["kube-state-metrics.monitoring.svc:8081"]}]
+
+  - job_name: alertmanager
+    static_configs: [{targets: ["alertmanager.monitoring.svc:9093"]}]
+
+  - job_name: prometheus
+    static_configs: [{targets: ["localhost:9090"]}]

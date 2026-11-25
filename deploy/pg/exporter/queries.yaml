@@ -1,0 +1,52 @@
+# L5 (ADR-011): custom postgres_exporter queries, read by the exporter sidecar of each member.
+# Each query works on a primary and on a standby. pg_current_wal_lsn() is only called when not in
+# recovery, because it raises an error on a standby. The monitor role has pg_monitor, which covers
+# pg_stat_replication, pg_replication_slots and pg_ls_archive_statusdir().
+
+# WAL waiting to be archived (L4 phase notes). A .ready file is created when a segment is complete, so the
+# age of the oldest one is how long finished WAL has waited for the repository. On a quiet primary nothing
+# is written, no segment is closed and no .ready file exists, so this does not grow on an idle cluster
+# (pg_stat_archiver.last_archived_time does).
+pg_ha_archive:
+  query: |
+    select count(*) filter (where name like '%.ready') as ready_count,
+           coalesce(extract(epoch from now() - min(modification) filter (where name like '%.ready')), 0) as oldest_ready_seconds
+    from pg_ls_archive_statusdir()
+  metrics:
+    - ready_count: {usage: GAUGE, description: "WAL segments waiting to be archived (.ready files)"}
+    - oldest_ready_seconds: {usage: GAUGE, description: "Age in seconds of the oldest .ready file, 0 when none"}
+
+# Replication lag per standby as seen by the primary (R1.7). Bytes: WAL the primary has written that the
+# standby has not replayed yet. Seconds: replay_lag, which Postgres reports as NULL once a standby has
+# caught up and nothing new is written, so NULL becomes 0. Empty on a standby.
+pg_ha_replication:
+  query: |
+    select application_name, state, sync_state,
+           case when pg_is_in_recovery() then 0 else pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) end as lag_bytes,
+           coalesce(extract(epoch from replay_lag), 0) as replay_lag_seconds
+    from pg_stat_replication
+    where replay_lsn is not null
+  metrics:
+    - application_name: {usage: LABEL, description: "Standby name (the Patroni member name)"}
+    - state: {usage: LABEL, description: "walsender state"}
+    - sync_state: {usage: LABEL, description: "sync or async"}
+    - lag_bytes: {usage: GAUGE, description: "Bytes between the primary's current WAL position and the standby's replay position"}
+    - replay_lag_seconds: {usage: GAUGE, description: "pg_stat_replication.replay_lag in seconds, 0 when caught up"}
+
+# WAL held back by each replication slot (R1.6, ADR-005). On a standby, the reference is the replay position.
+# lost = 1 when Postgres has invalidated the slot because it passed max_slot_wal_keep_size.
+pg_ha_slot:
+  query: |
+    select slot_name, slot_type,
+           active::int as active,
+           (wal_status = 'lost')::int as lost,
+           coalesce(pg_wal_lsn_diff(case when pg_is_in_recovery() then pg_last_wal_replay_lsn() else pg_current_wal_lsn() end, restart_lsn), 0) as retained_bytes,
+           coalesce(safe_wal_size, 0) as safe_wal_size_bytes
+    from pg_replication_slots
+  metrics:
+    - slot_name: {usage: LABEL, description: "Slot name"}
+    - slot_type: {usage: LABEL, description: "physical or logical"}
+    - active: {usage: GAUGE, description: "1 when a walsender is using the slot"}
+    - lost: {usage: GAUGE, description: "1 when wal_status is lost"}
+    - retained_bytes: {usage: GAUGE, description: "WAL bytes the slot keeps from being removed"}
+    - safe_wal_size_bytes: {usage: GAUGE, description: "Bytes that can still be written before the slot is lost"}

@@ -1,0 +1,55 @@
+# L5 (ADR-011): Alertmanager on the server node with a no-op receiver, so no webhook secret exists. Alerts are
+# read from its API (make alerts) and UI. Clustering is off: one replica.
+apiVersion: v1
+kind: Service
+metadata: {name: alertmanager, namespace: monitoring}
+spec:
+  selector: {app.kubernetes.io/name: alertmanager}
+  ports: [{name: web, port: 9093, targetPort: web}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: alertmanager, namespace: monitoring}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: alertmanager}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: alertmanager}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: {pg-ha/role: infra}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: alertmanager
+          image: __ALERTMANAGER_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+            - --cluster.listen-address=
+            - --web.listen-address=:9093
+          ports: [{name: web, containerPort: 9093}]
+          readinessProbe: {httpGet: {path: /-/ready, port: web}, periodSeconds: 5}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/alertmanager, readOnly: true}
+            - {name: data, mountPath: /alertmanager}
+      volumes:
+        - name: config
+          configMap: {name: alertmanager-config}
+        - name: data
+          emptyDir: {sizeLimit: 64Mi}

@@ -1,0 +1,82 @@
+# L5 (ADR-011): kube-state-metrics on the server node, limited to four resource types in two namespaces.
+# Roles only (no ClusterRole): list and watch of Jobs and CronJobs (backup and restore-test status),
+# StatefulSets (expected member count) and Deployments (CoreDNS readiness), in pg-ha and kube-system.
+# kube-state-metrics watches every listed resource in every listed namespace, so both Roles are identical.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: kube-state-metrics, namespace: monitoring}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: kube-state-metrics, namespace: pg-ha}
+rules:
+  - {apiGroups: [batch], resources: [jobs, cronjobs], verbs: [list, watch]}
+  - {apiGroups: [apps], resources: [statefulsets, deployments], verbs: [list, watch]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: kube-state-metrics, namespace: pg-ha}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: kube-state-metrics}
+subjects: [{kind: ServiceAccount, name: kube-state-metrics, namespace: monitoring}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: kube-state-metrics, namespace: kube-system}
+rules:
+  - {apiGroups: [batch], resources: [jobs, cronjobs], verbs: [list, watch]}
+  - {apiGroups: [apps], resources: [statefulsets, deployments], verbs: [list, watch]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: kube-state-metrics, namespace: kube-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: kube-state-metrics}
+subjects: [{kind: ServiceAccount, name: kube-state-metrics, namespace: monitoring}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: kube-state-metrics, namespace: monitoring}
+spec:
+  selector: {app.kubernetes.io/name: kube-state-metrics}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+    - {name: telemetry, port: 8081, targetPort: telemetry}   # its own process metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: kube-state-metrics, namespace: monitoring}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: kube-state-metrics}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: kube-state-metrics}}
+    spec:
+      serviceAccountName: kube-state-metrics
+      enableServiceLinks: false
+      nodeSelector: {pg-ha/role: infra}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: kube-state-metrics
+          image: __KUBE_STATE_METRICS_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args:
+            - --resources=cronjobs,jobs,statefulsets,deployments
+            - --namespaces=pg-ha,kube-system
+            - --port=8080
+            - --telemetry-port=8081
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: telemetry, containerPort: 8081}
+          readinessProbe: {httpGet: {path: /readyz, port: telemetry}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /livez, port: http}, periodSeconds: 15, failureThreshold: 6}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}

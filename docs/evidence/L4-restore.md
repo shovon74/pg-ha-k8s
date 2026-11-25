@@ -17,16 +17,16 @@ Hand-written notes: [`L4-restore-history.md`](L4-restore-history.md).
 
 | Check | Result |
 |---|---|
-| Timeline history files are present for every timeline switch up to 27 (found 26, need 26) | PASS |
+| Timeline history files are present for every timeline switch up to 37 (found 36, need 36) | PASS |
 | make restore completed: 1 leader, 2 streaming replicas, 1 sync standby in pg-restore | PASS |
 | Row counts and checksums of the seeded tables match the source | PASS |
 | The marker row written just before the restore is present | PASS |
-| Restored cluster is on a new timeline above the source's (28 > 27) | PASS |
+| Restored cluster is on a new timeline above the source's (38 > 37) | PASS |
 | archive_mode is off on the restored primary | PASS |
 | The restored primary archived nothing | PASS |
-| The source archive has no WAL on the restored timeline (0000001C) | PASS |
+| The source archive has no WAL on the restored timeline (00000026) | PASS |
 | Passwords from this namespace's Secret work on the restored cluster (post_bootstrap reset) | PASS |
-| make restore-clean deleted only the pg-restore namespace and its PVCs (15.86 s) | PASS |
+| make restore-clean deleted only the pg-restore namespace and its PVCs (12.64 s) | PASS |
 
 ## Point-in-time recovery (R5.3)
 

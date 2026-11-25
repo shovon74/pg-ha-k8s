@@ -543,6 +543,19 @@ What L4 changes for L5 (monitoring). Evidence is in `docs/evidence/L4-restore.md
 - **Restore-test resources.** The daily restore test (21:00 UTC, after the 20:00 backup) restores the whole database into emptyDir on a database node, with a 1 Gi memory limit. Disk and memory alerts on database nodes must allow for it, and its size grows with the database.
 - **L6:** The API egress policy must allow the API server's **real backend IP and port**. Allowing only the Service IP stays blocked, so the address must be discovered at deploy time.
 
+### Phase notes from L5
+
+What L5 changes for L6 (security). Evidence is in `docs/evidence/L5-monitoring.md`. The design is in `docs/observability.md`.
+
+- **NetworkPolicy ingress to `pg-ha`.** Prometheus in `monitoring` scrapes each member on 8008 (Patroni `/metrics`) and 9187 (exporter). Both ports must stay open to pods in `monitoring` with `app.kubernetes.io/name=prometheus`. Prometheus also needs 9100 to `monitoring-host`, 8080 and 8081 to kube-state-metrics, and 9093 to Alertmanager.
+- **API server service and pod proxy.** `make alerts`, `make monitoring`, the L5 tests and the existing `patroni_cluster` helper all reach pods through the API server's proxy. That traffic comes from the server node, not from a pod. Ingress policies on 8008 (pg-ha), 9090 and 9093 (monitoring) must allow the server node's address, or these commands break. Check this with the S2 method before enforcing.
+- **API egress.** Prometheus (pod discovery) and kube-state-metrics (list and watch) talk to the API server. Their egress policy needs the same real backend IP and port as Patroni (L4 note above).
+- **TLS enforcement.** The exporter connects to `127.0.0.1:5432` with `sslmode=require` as `monitor`. It keeps working if `pg_hba` moves to `hostssl`, as long as a `127.0.0.1/32` line remains for `monitor`. The local socket allows `peer` only, which does not fit a role named `monitor`.
+- **Patroni REST API is unauthenticated.** `/metrics` and `/cluster` are read without credentials. If L6 adds REST API TLS or auth, the `patroni` scrape job and `patroni_cluster` must change with it.
+- **New identities for the R8.8 audit.** ServiceAccount `prometheus` gets pods get, list and watch in `pg-ha` and `monitoring-host`. ServiceAccount `kube-state-metrics` gets jobs, cronjobs, statefulsets and deployments list and watch in `pg-ha` and `kube-system`. Both are Roles, with no ClusterRole. Alertmanager and node_exporter mount no token.
+- **Pod Security.** `monitoring` enforces `restricted`, and the `pg-ha` pods with the exporter sidecar are admitted under `restricted`. The only exception is `monitoring-host` (node_exporter, read-only hostPath), which enforces `privileged` and warns and audits at `restricted`.
+- **Secrets.** The exporter reads the monitor password from the existing `pg-credentials` Secret through `secretKeyRef`. Alertmanager has no receiver secret.
+
 **SHOULD cut lines**
 
 MUST items are never cut. SHOULDs are cut from the lowest priority upward, so security goes first and replication and failover go last. OPTIONAL items go before any SHOULD: R4.7 (GCS overlay) is dropped first, then R11.6 (Gemini comparison). R4.7 is built only after all security SHOULDs.

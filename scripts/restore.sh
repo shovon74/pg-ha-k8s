@@ -46,7 +46,7 @@ q() { printf "'%s'" "$1"; }
   echo "  parameters:"
   echo "    archive_mode: \"off\"   # ADR-010: never archive into the source stanza"
 } > "$ROOT_DIR/deploy/restore/30-restore.yml"
-kubectl kustomize "$ROOT_DIR/deploy/restore" | sed "s|__PG_IMAGE__|$PG_IMAGE|" | kubectl apply -f - >/dev/null
+kubectl kustomize "$ROOT_DIR/deploy/restore" | sed "s|__PG_IMAGE__|$PG_IMAGE|; s|__POSTGRES_EXPORTER_IMAGE__|$POSTGRES_EXPORTER_IMAGE|" | kubectl apply -f - >/dev/null
 
 PG_NS=$NS   # the Patroni helpers below now read the restored cluster
 end=$((SECONDS + ${RESTORE_WAIT:-1200})); T_LEADER=""

@@ -29,3 +29,13 @@ The first PITR run passed, but marker B was committed 18.5 s after T, once A's s
 ## PITR across timelines (R5.5, observed)
 
 pgBackRest picks the newest backup that ends before the target. In the first PITR run (target `2026-11-25 21:39:28+06`), that was `20261125-133844F`, taken before the L2 rerun's failovers. Recovery to a target on timeline 27 therefore replayed across every timeline switch in between, using the history files in the archive, and stopped at the right transaction (`recovery stopping before commit of transaction 4595`). The rerun used the newer `20261125-154309F` on the same timeline, so its evidence file does not show this crossing. R5.5 ("a target time after a failover restores correctly") is shown by that run. There is no dedicated `T:pitr-timeline` test.
+
+**Count of switches (added in L5).** The backup `20261125-133844F` started on timeline 16 (`00000010`, see [`L3/failover.md`](L3/failover.md): "The backup started on the new timeline (00000010)"). The target was on timeline 27 (`0000001B`). That run therefore replayed across **11 timeline switches** (16 → 27). The relevant log lines from the first run, taken from the agent session log (times UTC, from `kubectl -n pg-restore logs pg-2 -c postgres`):
+
+```
+2026-11-25 15:39:59.531 P00   INFO: repo1: restore backup set 20261125-133844F, recovery will start at 2026-11-25 13:38:44
+2026-11-25 15:40:06.541 UTC [39] LOG:  starting point-in-time recovery to 2026-11-25 15:39:28+00
+2026-11-25 15:40:15.666 UTC [39] LOG:  recovery stopping before commit of transaction 4595, time 2026-11-25 15:39:46.51932+00
+```
+
+The per-switch `restored log file "000000NN.history"` lines were filtered out by that run's `grep`, so they were not kept. The count comes from the backup's start timeline and the source's timeline, not from those lines.

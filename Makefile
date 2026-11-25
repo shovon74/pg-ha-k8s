@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help preflight tools certs secrets cluster image up down status clean-secrets \
-        deploy backup restore restore-clean test-restore test-restore-full test-pitr test-restore-schedule test-l4 seed test-replication failover-pod failover-node failover-storage test-split-brain switchover failover-chain failover-diverge test-failover test-api-outage \
+        deploy backup restore restore-clean test-restore test-restore-full test-pitr test-restore-schedule test-l4 monitoring alerts test-alerts test-metrics alerts-failover alerts-archive test-l5 prometheus-ui alertmanager-ui seed test-replication failover-pod failover-node failover-storage test-split-brain switchover failover-chain failover-diverge test-failover test-api-outage \
         test-archive test-backup-schedule test-retention test-backup-failover test-garage-restart test-backup spike-s1 spike-s2 spike-s3 spike-s4 spikes
 
 help: ## List targets
@@ -27,7 +27,7 @@ cluster: tools ## Create the k3d cluster (1 tainted server + 3 agents)
 image: tools ## Build our Postgres image and import it into k3d
 	@scripts/image.sh
 
-up: preflight tools certs secrets cluster image deploy ## Bootstrap everything built so far
+up: preflight tools certs secrets cluster image deploy monitoring ## Bootstrap everything built so far
 	@scripts/status.sh
 
 deploy: ## Deploy Garage + Patroni with archiving, create the stanza (BACKUP_SCHEDULE, default '0 20 * * *')
@@ -41,6 +41,32 @@ restore: ## L4: restore the whole cluster into NS=pg-restore [TARGET_TIME='YYYY-
 
 restore-clean: ## L4: delete only the pg-restore namespace and its PVCs
 	@scripts/restore-clean.sh
+
+monitoring: ## L5: Prometheus, Alertmanager, kube-state-metrics, node_exporter; waits until all targets are up
+	@scripts/monitoring.sh
+
+alerts: ## L5: list firing alerts from Alertmanager (ALL=1 adds pending ones)
+	@scripts/alerts.sh
+
+test-alerts: ## L5 R10.2: promtool check and unit tests for every alert rule (Docker only)
+	@scripts/test-alerts.sh
+
+test-metrics: ## L5 R10.1/R1.7: all targets up, key series present, lag in bytes and seconds rises and recovers
+	@tests/l5-metrics.sh
+
+alerts-failover: ## L5 R10.3: node failover; MemberDown, ReplicaNotStreaming, FailoverOccurred fire, then resolve
+	@tests/l5-alerts-failover.sh
+
+alerts-archive: ## L5 R10.3/R9.6: block the primary's traffic to Garage; archive alerts fire, then resolve and catch up
+	@tests/l5-alerts-archive.sh
+
+test-l5: test-alerts test-metrics alerts-failover alerts-archive ## L5 gate: all of the above
+
+prometheus-ui: ## Port-forward the Prometheus UI to http://127.0.0.1:9090 (Ctrl-C to stop)
+	@. scripts/lib.sh && kubectl -n monitoring port-forward svc/prometheus 9090:9090
+
+alertmanager-ui: ## Port-forward the Alertmanager UI to http://127.0.0.1:9093 (Ctrl-C to stop)
+	@. scripts/lib.sh && kubectl -n monitoring port-forward svc/alertmanager 9093:9093
 
 seed: ## Load a synthetic ~150 MB pgbench dataset through pg-rw (SEED_SCALE=10)
 	@scripts/seed.sh

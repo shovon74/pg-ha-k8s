@@ -1,0 +1,211 @@
+# L5 (ADR-011, R10.2): alert rules. Every Postgres, backup and restore rule is scoped to namespace="pg-ha", so
+# a restored cluster in pg-restore never pages (it is not scraped either). Each rule has a severity, a summary
+# and a "why" annotation that explains its threshold. Unit tests: tests/alerts/pg-ha.test.yml (make test-alerts).
+# Severities: critical = data or availability at risk now; warning = degraded or needs attention today;
+# info = a record that something happened. Full table: docs/observability.md.
+groups:
+  - name: pg-ha-replication
+    rules:
+      - alert: NoPrimary
+        expr: |
+          sum by (namespace) (patroni_primary{namespace="pg-ha"}) < 1
+          or absent(patroni_primary{namespace="pg-ha"})
+        for: 45s
+        labels: {severity: critical}
+        annotations:
+          summary: "No Patroni member is primary in {{ $labels.namespace }}; writes are failing."
+          why: "Automatic failover is measured at 26 s at worst (L2 node mode, target 30 s). 45 s means failover itself has not completed."
+
+      - alert: MultiplePrimaries
+        expr: |
+          sum by (namespace) (patroni_primary{namespace="pg-ha"}) > 1
+          or count by (namespace) (pg_replication_is_replica{namespace="pg-ha"} == 0) > 1
+        for: 20s
+        labels: {severity: critical}
+        annotations:
+          summary: "More than one member reports itself primary in {{ $labels.namespace }} (split brain)."
+          why: "Members are scraped at slightly different moments, so one scrape can show the old and new primary during a switchover. Two consecutive evaluations (20 s) rule that out."
+
+      - alert: MemberDown
+        expr: |
+          up{namespace="pg-ha", job="patroni"} == 0
+          or patroni_postgres_running{namespace="pg-ha"} == 0
+          or count by (namespace) (up{namespace="pg-ha", job="patroni"} == 1)
+             < on (namespace) kube_statefulset_replicas{namespace="pg-ha", statefulset="pg"}
+        for: 30s
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ if $labels.pod }}Patroni member {{ $labels.pod }} in {{ $labels.namespace }} is down or Postgres is not running.{{ else }}Fewer Patroni members are up in {{ $labels.namespace }} than the StatefulSet expects.{{ end }}"
+          why: "A pod restart takes 10-20 s and Patroni's leader ttl is 20 s. 30 s filters a normal restart. Warning, because the cluster still serves with two members."
+
+      - alert: ReplicaNotStreaming
+        expr: |
+          count by (namespace) (patroni_postgres_streaming{namespace="pg-ha"} == 1)
+            < on (namespace) (kube_statefulset_replicas{namespace="pg-ha", statefulset="pg"} - 1)
+          or max by (namespace) (
+            kube_statefulset_replicas{namespace="pg-ha", statefulset="pg"} > 1
+            unless on (namespace) patroni_postgres_streaming{namespace="pg-ha"} == 1)
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "Fewer standbys are streaming than expected in {{ $labels.namespace }} (a member is down, re-cloning or disconnected)."
+          why: "A diverged member is re-cloned (ADR-008), about 1 min at this data size (L4). 2 min avoids paging on a normal rejoin. Raise it as the database grows."
+
+      - alert: ReplicationLagHigh
+        expr: max by (namespace, application_name) (pg_ha_replication_lag_bytes{namespace="pg-ha"}) > 16 * 1024 * 1024
+        for: 2m
+        labels: {severity: warning, lag: bytes}
+        annotations:
+          summary: "Standby {{ $labels.application_name }} is {{ $value | humanize1024 }}B behind the primary's WAL in {{ $labels.namespace }}."
+          why: "Above maximum_lag_on_failover (1 MiB) Patroni will not promote that standby. 16 MiB (one WAL segment) for 2 min filters bulk loads such as make seed."
+
+      - alert: ReplicationLagHigh
+        expr: max by (namespace, application_name) (pg_ha_replication_replay_lag_seconds{namespace="pg-ha"}) > 30
+        for: 2m
+        labels: {severity: warning, lag: seconds}
+        annotations:
+          summary: "Standby {{ $labels.application_name }} replays {{ $value | humanizeDuration }} behind the primary in {{ $labels.namespace }}."
+          why: "30 s equals the RTO target: a promoted standby that far behind would add that much replay time. 2 min filters bursts."
+
+      - alert: SyncStandbyMissing
+        expr: |
+          sum by (namespace) (patroni_sync_standby{namespace="pg-ha"}) < 1
+          and on (namespace) sum by (namespace) (patroni_primary{namespace="pg-ha"}) == 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "The primary in {{ $labels.namespace }} has no synchronous standby; commits are not replicated before they are acknowledged."
+          why: "synchronous_mode is non-strict (ADR-004), so the primary keeps writing without a standby, and Patroni will not fail over automatically. Patroni picks a new sync standby within a few 3 s loops, so 1 min means none is eligible."
+
+      - alert: SlotWALRetentionHigh
+        expr: max by (namespace, pod, slot_name) (pg_ha_slot_retained_bytes{namespace="pg-ha"}) > 512 * 1024 * 1024
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Slot {{ $labels.slot_name }} on {{ $labels.pod }} holds {{ $value | humanize1024 }}B of WAL."
+          why: "Half of max_slot_wal_keep_size (1 GB, ADR-005). Leaves time to act before Postgres invalidates the slot and the standby must use the archive or a re-clone."
+
+      - alert: SlotLost
+        expr: max by (namespace, pod, slot_name) (pg_ha_slot_lost{namespace="pg-ha"}) == 1
+        labels: {severity: warning}
+        annotations:
+          summary: "Slot {{ $labels.slot_name }} on {{ $labels.pod }} was invalidated (wal_status lost)."
+          why: "Any lost slot means the 1 GB cap was reached. The standby now depends on restore_command from the archive or on a re-clone."
+
+      - alert: FailoverOccurred
+        expr: |
+          max by (namespace) (patroni_postgres_timeline{namespace="pg-ha"})
+            > max by (namespace) (patroni_postgres_timeline{namespace="pg-ha"} offset 5m)
+        labels: {severity: info}
+        annotations:
+          summary: "The timeline in {{ $labels.namespace }} increased in the last 5 min: a member was promoted (failover or switchover)."
+          why: "Informational. Every promotion starts a new timeline. It clears 5 min later."
+
+  - name: pg-ha-archive-backup
+    rules:
+      - alert: ArchiveFailing
+        expr: increase(pg_stat_archiver_failed_count{namespace="pg-ha"}[5m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "WAL archiving on {{ $labels.pod }} failed in the last 5 min."
+          why: "Any failure means WAL is not reaching the repository. A single failure during a Garage restart warns and clears within 5 min. ArchiveStale is the page."
+
+      - alert: ArchiveStale
+        expr: max by (namespace, pod) (pg_ha_archive_oldest_ready_seconds{namespace="pg-ha"}) > 120
+        labels: {severity: critical}
+        annotations:
+          summary: "A completed WAL segment on {{ $labels.pod }} has waited {{ $value | humanizeDuration }} to be archived; PITR is losing data."
+          why: "A segment is closed at most archive_timeout (60 s) after its first write, and a Garage restart delays archiving by about 60 s (L3). 120 s on top of that means writes from more than 3 min ago are not in the repository. An idle cluster closes no segment, so it does not fire."
+
+      - alert: BackupFailed
+        expr: |
+          (
+            max by (namespace) (kube_job_created{namespace="pg-ha", job_name=~"pg-backup-.+"}
+              and on (namespace, job_name) kube_job_failed{namespace="pg-ha", job_name=~"pg-backup-.+", condition="true"} == 1)
+            > max by (namespace) (kube_job_created{namespace="pg-ha", job_name=~"pg-backup-.+"}
+              and on (namespace, job_name) kube_job_status_succeeded{namespace="pg-ha", job_name=~"pg-backup-.+"} > 0)
+          )
+          or (
+            max by (namespace) (kube_job_created{namespace="pg-ha", job_name=~"pg-backup-.+"}
+              and on (namespace, job_name) kube_job_failed{namespace="pg-ha", job_name=~"pg-backup-.+", condition="true"} == 1)
+            unless on (namespace) max by (namespace) (kube_job_status_succeeded{namespace="pg-ha", job_name=~"pg-backup-.+"} > 0)
+          )
+        labels: {severity: warning}
+        annotations:
+          summary: "The most recent backup Job in {{ $labels.namespace }} failed."
+          why: "The backup Job exits non-zero on any backup, expire or verify error, so a failed Job means the newest backup is missing or unverified. It clears when a newer backup Job succeeds."
+
+      - alert: BackupStale
+        expr: |
+          time() - max by (namespace) (
+            kube_job_status_completion_time{namespace="pg-ha", job_name=~"pg-backup-.+"}
+              and on (namespace, job_name) kube_job_status_succeeded{namespace="pg-ha", job_name=~"pg-backup-.+"} > 0
+          ) > 26 * 3600
+          or (
+            time() - max by (namespace) (kube_cronjob_created{namespace="pg-ha", cronjob="pg-backup"}) > 26 * 3600
+            unless on (namespace) max by (namespace) (kube_job_status_succeeded{namespace="pg-ha", job_name=~"pg-backup-.+"} > 0)
+          )
+        labels: {severity: critical}
+        annotations:
+          summary: "No backup in {{ $labels.namespace }} has succeeded for more than 26 h."
+          why: "The backup runs daily at 20:00 UTC (ADR-009). 26 h allows a run that is late or slow but not a missed day. A new cluster gets 26 h from the CronJob's creation. Only pg-backup-* Jobs count: the CronJob's lastSuccessfulTime is also set by stanza and check Jobs made from its template."
+
+      - alert: RestoreTestFailed
+        expr: |
+          (
+            max by (namespace) (kube_job_created{namespace="pg-ha", job_name=~"pg-restore-test.*"}
+              and on (namespace, job_name) kube_job_failed{namespace="pg-ha", job_name=~"pg-restore-test.*", condition="true"} == 1)
+            > max by (namespace) (kube_job_created{namespace="pg-ha", job_name=~"pg-restore-test.*"}
+              and on (namespace, job_name) kube_job_status_succeeded{namespace="pg-ha", job_name=~"pg-restore-test.*"} > 0)
+          )
+          or (
+            max by (namespace) (kube_job_created{namespace="pg-ha", job_name=~"pg-restore-test.*"}
+              and on (namespace, job_name) kube_job_failed{namespace="pg-ha", job_name=~"pg-restore-test.*", condition="true"} == 1)
+            unless on (namespace) max by (namespace) (kube_job_status_succeeded{namespace="pg-ha", job_name=~"pg-restore-test.*"} > 0)
+          )
+        labels: {severity: warning}
+        annotations:
+          summary: "The most recent restore-test Job in {{ $labels.namespace }} failed; the newest backup may not be restorable."
+          why: "The restore test exits non-zero on any restore, recovery or pg_amcheck error (ADR-010). It clears when a newer restore test succeeds."
+
+      - alert: RestoreTestStale
+        expr: |
+          time() - max by (namespace) (
+            kube_job_status_completion_time{namespace="pg-ha", job_name=~"pg-restore-test.*"}
+              and on (namespace, job_name) kube_job_status_succeeded{namespace="pg-ha", job_name=~"pg-restore-test.*"} > 0
+          ) > 26 * 3600
+          or (
+            time() - max by (namespace) (kube_cronjob_created{namespace="pg-ha", cronjob="pg-restore-test"}) > 26 * 3600
+            unless on (namespace) max by (namespace) (kube_job_status_succeeded{namespace="pg-ha", job_name=~"pg-restore-test.*"} > 0)
+          )
+        labels: {severity: warning}
+        annotations:
+          summary: "No restore test in {{ $labels.namespace }} has succeeded for more than 26 h."
+          why: "The restore test runs daily at 21:00 UTC (ADR-010). 26 h allows a late run but not a missed day."
+
+  - name: pg-ha-platform
+    rules:
+      - alert: DiskLow
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.15
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Node {{ $labels.node }} has {{ $value | humanizePercentage }} of its root filesystem free."
+          why: "local-path volumes are not size-limited, so data, WAL, the restore test's emptyDir (up to 4 Gi) and the 1 GB slot cap all share this disk. 15% of the 48 GB host is about 7 GB, which still fits a restore test and a full slot."
+
+      - alert: CoreDNSNotReady
+        expr: kube_deployment_status_replicas_available{namespace="kube-system", deployment="coredns"} < 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "CoreDNS has no available replica; promotion and archiving cannot resolve Garage."
+          why: "Promotion runs restore_command, which resolves Garage through cluster DNS (L3). A CoreDNS restart takes 10-20 s, so 1 min is a real outage."
+
+      - alert: MonitoringTargetDown
+        expr: up{job=~"kube-state-metrics|node|alertmanager"} == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Scrape target {{ $labels.job }}/{{ $labels.instance }} is down; alerts that depend on it are blind."
+          why: "Backup, restore-test, CoreDNS and disk alerts read these targets and stay silent without them. 5 min tolerates a restart or a stopped node during a failover test."

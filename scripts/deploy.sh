@@ -32,7 +32,7 @@ secret pg-credentials $(for r in postgres replicator rewind monitor backup app a
 secret pg-tls --from-file=tls.crt="$T/postgres-server.crt" --from-file=tls.key="$T/postgres-server.key" --from-file=ca.crt="$T/ca.crt"
 secret pgbackrest-tls --from-file=server.crt="$T/pgbackrest-server.crt" --from-file=server.key="$T/pgbackrest-server.key" \
   --from-file=client.crt="$T/pgbackrest-client.crt" --from-file=client.key="$T/pgbackrest-client.key" --from-file=ca.crt="$T/ca.crt"
-kubectl kustomize "$ROOT_DIR/deploy/pg" | sed "s|__PG_IMAGE__|$PG_IMAGE|; s|__BACKUP_SCHEDULE__|'$BACKUP_SCHEDULE'|; s|__RESTORE_TEST_SCHEDULE__|'$RESTORE_TEST_SCHEDULE'|" | kubectl apply -f -
+kubectl kustomize "$ROOT_DIR/deploy/pg" | sed "s|__PG_IMAGE__|$PG_IMAGE|; s|__POSTGRES_EXPORTER_IMAGE__|$POSTGRES_EXPORTER_IMAGE|; s|__BACKUP_SCHEDULE__|'$BACKUP_SCHEDULE'|; s|__RESTORE_TEST_SCHEDULE__|'$RESTORE_TEST_SCHEDULE'|" | kubectl apply -f -
 
 kubectl -n "$PG_NS" rollout status "statefulset/$PG_STS" --timeout=600s
 end=$((SECONDS + ${PG_WAIT:-180}))

@@ -1,0 +1,50 @@
+# L5 (ADR-011): node_exporter on every node, for disk space and memory. It is the only workload in the
+# monitoring-host namespace, which is the documented Pod Security exception (see namespaces.yaml): a read-only
+# hostPath mount of the node's root. No hostNetwork, no hostPID, non-root, no capabilities.
+# Each k3d node is a container on the same VM, so every node reports the same host disk.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: node-exporter, namespace: monitoring-host}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: node-exporter}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: node-exporter}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      tolerations: [{operator: Exists}]   # every node, the tainted server included
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: node-exporter
+          image: __NODE_EXPORTER_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args:
+            - --path.rootfs=/host
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --web.listen-address=:9100
+            - --collector.disable-defaults
+            - --collector.filesystem
+            - --collector.meminfo
+            - --collector.loadavg
+            - --collector.cpu
+            # The node's root is an overlay filesystem (a k3d node is a container), so overlay stays included.
+            - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|nsfs|proc|procfs|pstore|securityfs|sysfs|tracefs|tmpfs|shm)$
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|etc|var/lib/kubelet/pods|var/lib/rancher/k3s/agent/containerd)($|/)
+          ports: [{name: metrics, containerPort: 9100}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: root, mountPath: /host, readOnly: true, mountPropagation: HostToContainer}
+      volumes:
+        - name: root
+          hostPath: {path: /}
