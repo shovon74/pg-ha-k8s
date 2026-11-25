@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates docs/evidence/L2-failover.md from the per-mode files in docs/evidence/L2/.
 . "$(dirname "$0")/../scripts/spikes/lib.sh"
-MODES="pod node storage split-brain switchover chain api-outage"
+MODES="pod node storage split-brain switchover chain diverge api-outage"
 { printf '# L2: failover, switchover and split-brain\n\nGenerated from the per-mode files in [`L2/`](L2/) each time a mode runs. Timestamps are UTC.'
   [ ! -f "$EV_DIR/L2-failover-history.md" ] || printf ' Hand-written notes: [`L2-failover-history.md`](L2-failover-history.md).'
   printf '\n\nRTO is fault injection to the first commit acknowledged by a new primary, measured by a probe Job writing through pg-rw every 500 ms over new connections with a 2 s connect timeout. RPO is the number of acknowledged rows missing on the new primary. The target is RTO at most 30 s with safe settings (ttl 20, loop_wait 3, retry_timeout 5). A run over the target is reported as **OVER TARGET**, not PASS. After every run the harness also checks WAL archive health on the current primary (no new archive failures, a segment archived within 90 s of a WAL fill) and records where CoreDNS ran.\n'

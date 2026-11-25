@@ -32,6 +32,7 @@ Keep data checksums, `wal_log_hints=on` and the dedicated rewind role. Patroni's
 
 - Rejoin after an unclean failover is slower, because it copies the whole data directory. At about 180 MB this takes seconds, and it is not on the RTO path: writes resume on the new primary before the old one rejoins. The rejoin time is measured in the L2 evidence.
 - Archiving after any sequence of failovers and switchovers no longer depends on what a rejoined member left in `pg_wal`. The L2 harness checks archive health after every run.
+- **Verified (L4 step 0b):** `make failover-diverge` forces the divergence. Replication from the primary is blocked while it commits, then its node is stopped. The old primary was re-cloned (`reinitializing due to diverged timelines`, `replica has been created using basebackup`), made primary again by switchover, and archived with no failures. Evidence: `docs/evidence/L2/diverge.md`.
 - The re-clone deletes the diverged member's data directory. That is safe only because the current primary remains the source of truth, as before.
 - **For multi-TB databases** a full re-clone per failover is too slow and too much I/O. There, keep `pg_rewind` and add a post-rewind step that marks old-timeline segments as archived. Never suppress error 045.
 - Checksums also detect page corruption, at a small write cost.

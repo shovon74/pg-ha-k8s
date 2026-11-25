@@ -9,6 +9,7 @@ resources:
   - statefulset.yaml
   - pdb.yaml
   - backup-cronjob.yaml
+  - restore-test-cronjob.yaml
 configMapGenerator:
   # Patroni reads every file in /etc/patroni/conf.d, merged in name order.
   # L3 adds archiving as 20-archive.yml without editing 10-base.yml.
@@ -16,6 +17,6 @@ configMapGenerator:
     files: [patroni/10-base.yml, patroni/20-archive.yml]
   # ADR-009: repo.conf holds every repo1-* setting; db.conf and job.conf hold the rest.
   - name: pg-pgbackrest
-    files: [pgbackrest/repo.conf, pgbackrest/db.conf, pgbackrest/job.conf]
+    files: [pgbackrest/repo.conf, pgbackrest/db.conf, pgbackrest/job.conf, pgbackrest/restore-test.conf]
   - name: pg-scripts
-    files: [scripts/post-bootstrap.sh, scripts/backup-job.sh]
+    files: [scripts/post-bootstrap.sh, scripts/backup-job.sh, scripts/restore-bootstrap.sh, scripts/restore-test.sh, scripts/fingerprint.sql]

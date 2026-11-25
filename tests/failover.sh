@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# L2 failure harness (R3.1-R3.7, R6.3, ADR-006). Usage: tests/failover.sh pod|node|storage|split-brain|switchover
+# L2 failure harness (R3.1-R3.7, R6.3, ADR-006). Usage: tests/failover.sh pod|node|storage|split-brain|switchover|diverge
 #   RUNS=n (default 3, switchover 1), TO=pg-N (switchover target, default the current sync standby)
 #   EV_OUT=path writes the evidence there instead of docs/evidence/L2/<mode>.md, and leaves L2-failover.md alone
 #   (used by L3 to fault the cluster without replacing the L2 results).
@@ -18,6 +18,11 @@
 #                so the kubelet mounts the volume again. See the evidence file for the limits.
 #   split-brain  docker exec <agent> iptables: drop the primary pod's traffic to the API server backend only.
 #                Pod-to-pod traffic, including replication, is untouched. The rule is removed afterwards.
+#   diverge      (L4, ADR-008) docker exec <agent> iptables: drop replication traffic from the primary pod to
+#                both replicas (source port 5432) for DIVERGE_HOLD s (default 5) while the probe writes, so
+#                the primary writes WAL that no replica receives. Then docker stop the agent, as in node mode.
+#                The new primary is promoted behind the old one, so the old primary has diverged and must
+#                rejoin by re-clone. The rules go with the stopped container and are deleted again anyway.
 #   switchover   POST /switchover to the leader's Patroni REST API over kubectl port-forward and curl
 #                (the REST API is unauthenticated until L6). The API server pod proxy is not used for this
 #                POST because Patroni rejects its request without a Content-Length header (HTTP 411).
@@ -28,16 +33,18 @@
 # (archive_timeout 60 s + 30 s margin). CoreDNS placement is recorded per run. A run whose RTO is over the
 # 30 s target is reported as OVER TARGET, never as PASS, and the script then exits non-zero.
 . "$(dirname "$0")/lib.sh"
-MODE=${1:-}; case "$MODE" in pod|node|storage|split-brain|switchover) ;; *) die "usage: $0 pod|node|storage|split-brain|switchover" ;; esac
+MODE=${1:-}; case "$MODE" in pod|node|storage|split-brain|switchover|diverge) ;; *) die "usage: $0 pod|node|storage|split-brain|switchover|diverge" ;; esac
 RUNS=${RUNS:-$([ "$MODE" = switchover ] && echo 1 || echo 3)}
 [[ "$RUNS" =~ ^[1-9]$ ]] || die "RUNS must be 1-9"
 case "$MODE" in pod) DURATION=70 ;; switchover) DURATION=50 ;; *) DURATION=110 ;; esac
+DIVERGE_IPS=""
 W=$(mktemp -d); mkdir -p "$EV_DIR/L2"; EV_FILE="${EV_OUT:-$EV_DIR/L2/$MODE.md}"
 PENDING_RESTORE=""; SAMPLER_PIDS=""
 
 restore_fault() {
   case "$PENDING_RESTORE" in
-    node:*) docker start "${PENDING_RESTORE#node:}" >/dev/null 2>&1 || true ;;
+    node:*) docker start "${PENDING_RESTORE#node:}" >/dev/null 2>&1 || true
+            for ip in ${DIVERGE_IPS:-}; do docker exec "${PENDING_RESTORE#node:}" iptables -D FORWARD -s "$OLD_IP" -d "$ip" -p tcp --sport 5432 -j DROP >/dev/null 2>&1 || true; done ;;
     storage:*) kubectl -n "$NS" delete pod "${PENDING_RESTORE#storage:}" --wait=false >/dev/null 2>&1 || true ;;
     split:*) set -- ${PENDING_RESTORE#split:}; docker exec "$1" iptables -D FORWARD -s "$2" -d "$3" -p tcp --dport "$4" -j DROP >/dev/null 2>&1 || true ;;
   esac
@@ -102,6 +109,12 @@ for N in $(seq 1 "$RUNS"); do
   case "$MODE" in
     pod) T_FAULT=$(now); kubectl -n "$NS" delete pod "$OLD" --wait=false >/dev/null ;;
     node) T_FAULT=$(now); docker stop "$OLD_NODE" >/dev/null; PENDING_RESTORE="node:$OLD_NODE" ;;
+    diverge)
+      DIVERGE_IPS=""; for m in pg-0 pg-1 pg-2; do [ "$m" = "$OLD" ] || DIVERGE_IPS="$DIVERGE_IPS $(pod_ip "$m")"; done
+      T_FAULT=$(now); PENDING_RESTORE="node:$OLD_NODE"
+      for ip in $DIVERGE_IPS; do docker exec "$OLD_NODE" iptables -I FORWARD 1 -s "$OLD_IP" -d "$ip" -p tcp --sport 5432 -j DROP; done
+      sleep "${DIVERGE_HOLD:-5}"; T_STOP=$(now); docker stop "$OLD_NODE" >/dev/null
+      note "Replication from \`$OLD\` to$(printf ' `%s`' $DIVERGE_IPS) blocked at $(iso "$T_FAULT") UTC, node stopped +$(secs "$T_FAULT" "$T_STOP") s later." ;;
     storage)
       PID=$(container_pid "$OLD_NODE" "$OLD")
       PM=$(docker exec "$OLD_NODE" sh -c "for d in /proc/[0-9]*; do [ \"\$(cut -d' ' -f4 \$d/stat 2>/dev/null)\" = $PID ] && [ \"\$(cat \$d/comm 2>/dev/null)\" = postgres ] && echo \${d#/proc/}; done; true" | head -1)
@@ -205,6 +218,7 @@ case "$MODE" in
   node) DESC='`docker stop` on the k3d agent container hosting the primary (D6), restarted with `docker start` once a new leader holds the lock. Every process on that node dies, so the lock must expire (ttl 20 s) before a replica can take over.' ;;
   storage) DESC='The primary'"'"'s data volume is made unavailable inside its container: `/data` is lazily unmounted in the Postgres container'"'"'s mount namespace (`docker exec <agent> nsenter -t <pid> -m umount -l /data`) and the postmaster is killed with SIGKILL, so Patroni cannot restart Postgres. It is restored by deleting the pod once a new leader holds the lock, so the kubelet mounts the volume again. **Limits:** a running Postgres does not notice a detached directory because it works relative to its open data directory, so the SIGKILL stands in for the I/O error or PANIC a real disk failure would cause. The data on the volume is intact, so this is not a lost or corrupted disk, and a hung disk that blocks I/O without failing is not shown. A read-only remount was tried first and refused (`mount point is busy`), because Postgres holds its files open for writing.' ;;
   split-brain) DESC='An iptables rule on the primary'"'"'s node drops only the primary pod'"'"'s traffic to the API server backend (the S2 finding: policy and filtering see the real backend address). Replication and client traffic are untouched, so the old primary can still reach its sync standby and acknowledge commits until it demotes itself. The rule is removed afterwards.' ;;
+  diverge) DESC='Replication traffic from the primary pod to both replicas is dropped by iptables on its node for '"${DIVERGE_HOLD:-5}"' s while the probe writes, so the primary writes WAL (commits that wait for the sync standby and are never acknowledged) that no replica receives. Then its k3d agent is stopped, as in the node mode, and started again once a new leader holds the lock. RTO counts from the start of the block. The old primary has diverged and must rejoin by re-clone (ADR-008).' ;;
   switchover) DESC='`POST /switchover` to the leader'"'"'s Patroni REST API over `kubectl port-forward` and `curl`, naming the target (default the current sync standby). No exec is used. The API server pod proxy was tried first and refused with HTTP 411, because Patroni requires a Content-Length header that the proxy does not forward. **The REST API is unauthenticated until L6.**' ;;
 esac
 { printf '# L2 failure mode: %s\n\n**Result: %s**\n\n' "$MODE" "$verdict"

@@ -1,0 +1,56 @@
+# L4 (ADR-010, R4.5, R5.4): scheduled restore test. Restores the newest backup into an emptyDir, starts
+# Postgres with no TCP listener and no Service, compares the fingerprint recorded at backup time, runs
+# pg_amcheck, and fails the Job on any error. The schedule is filled in by scripts/deploy.sh from
+# RESTORE_TEST_SCHEDULE (default daily 21:00 UTC, after the 20:00 backup). make test-restore creates a Job
+# from this same template.
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: pg-restore-test}
+spec:
+  schedule: __RESTORE_TEST_SCHEDULE__
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      template:
+        metadata: {labels: {app.kubernetes.io/name: pg-restore-test}}
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          automountServiceAccountToken: false
+          nodeSelector: {pg-ha/role: db}
+          securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: restore-test
+              image: __PG_IMAGE__
+              imagePullPolicy: IfNotPresent
+              command: [bash, /scripts/restore-test.sh]
+              env:
+                - {name: HOME, value: /tmp}
+              envFrom:
+                - secretRef: {name: pgbackrest-repo}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+              resources:
+                requests: {cpu: 200m, memory: 256Mi}
+                limits: {memory: 1Gi}
+              volumeMounts:
+                - {name: config, mountPath: /etc/pgbackrest, readOnly: true}
+                - {name: scripts, mountPath: /scripts, readOnly: true}
+                - {name: scratch, mountPath: /scratch}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: config
+              configMap:
+                name: pg-pgbackrest
+                items:
+                  - {key: restore-test.conf, path: pgbackrest.conf}
+                  - {key: repo.conf, path: conf.d/repo.conf}
+            - name: scripts
+              configMap: {name: pg-scripts, defaultMode: 0555}
+            - {name: scratch, emptyDir: {sizeLimit: 4Gi}}
+            - {name: tmp, emptyDir: {}}

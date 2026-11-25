@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help preflight tools certs secrets cluster image up down status clean-secrets \
-        deploy backup seed test-replication failover-pod failover-node failover-storage test-split-brain switchover failover-chain test-failover test-api-outage \
+        deploy backup restore restore-clean test-restore test-restore-full test-pitr test-restore-schedule test-l4 seed test-replication failover-pod failover-node failover-storage test-split-brain switchover failover-chain failover-diverge test-failover test-api-outage \
         test-archive test-backup-schedule test-retention test-backup-failover test-garage-restart test-backup spike-s1 spike-s2 spike-s3 spike-s4 spikes
 
 help: ## List targets
@@ -36,6 +36,12 @@ deploy: ## Deploy Garage + Patroni with archiving, create the stanza (BACKUP_SCH
 backup: ## On-demand full backup, expire and verify, from the pg-backup CronJob template
 	@scripts/pgbr-job.sh pg-backup-manual-$$(date -u +%Y%m%d%H%M%S)
 
+restore: ## L4: restore the whole cluster into NS=pg-restore [TARGET_TIME='YYYY-MM-DD HH:MM:SS+06'] [TARGET_TIMELINE=latest]
+	@scripts/restore.sh
+
+restore-clean: ## L4: delete only the pg-restore namespace and its PVCs
+	@scripts/restore-clean.sh
+
 seed: ## Load a synthetic ~150 MB pgbench dataset through pg-rw (SEED_SCALE=10)
 	@scripts/seed.sh
 
@@ -60,7 +66,10 @@ switchover: ## Planned switchover to TO=pg-N (default the sync standby), RTO mea
 failover-chain: ## L2: node failover, then switchover back to the old primary; archiving must stay healthy
 	@tests/failover-chain.sh
 
-test-failover: failover-pod failover-node failover-storage test-split-brain switchover failover-chain ## L2 gate: all modes
+failover-diverge: ## L2/ADR-008: primary diverges (replication blocked, then node stopped), rejoins by re-clone, switch back
+	@tests/failover-chain.sh diverge
+
+test-failover: failover-pod failover-node failover-storage test-split-brain switchover failover-chain failover-diverge ## L2 gate: all modes
 
 test-api-outage: ## L2 optional: stop the k3d server (API) for OUTAGE=60 s
 	@tests/api-outage.sh
@@ -81,6 +90,20 @@ test-garage-restart: ## L3: restart Garage while writing; archiving recovers wit
 	@tests/l3-garage-restart.sh
 
 test-backup: test-archive test-backup-schedule test-retention test-backup-failover test-garage-restart ## L3 gate: all of the above
+
+test-restore: ## L4 R4.5/R5.4: backup, then the restore-test Job from the CronJob template; plus a negative run
+	@tests/l4-restore-test.sh
+
+test-restore-full: ## L4 R5.1: make restore (latest) into pg-restore, row counts and checksums vs the source
+	@tests/l4-restore-full.sh
+
+test-pitr: ## L4 R5.3: markers A and B around T, restore to T, A present and B absent
+	@tests/l4-pitr.sh
+
+test-restore-schedule: ## L4 R4.5: a restore-test Job created by the CronJob itself, then default restored
+	@tests/l4-restore-scheduled.sh
+
+test-l4: test-restore-full test-pitr test-restore test-restore-schedule ## L4 gate: all of the above
 
 status: ## Show nodes, resource use, Patroni members, lag and the sync standby
 	@scripts/status.sh

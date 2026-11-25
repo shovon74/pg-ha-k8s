@@ -530,6 +530,17 @@ What L3 changes for L4 (restore and PITR). Evidence is in `docs/evidence/L3-back
 - **Restores reuse the backup Job's setup.** A restore Job in `pg-restore` can use the same `repo.conf` and the `pgbackrest-repo` Secret. The L0 certificates already cover that namespace. Its pods need cluster DNS, which now runs on the server node.
 - **Promotion fetches history files.** A promoted standby reads timeline history through `restore_command`, which adds about 2 s to node-failure RTO. A restored cluster promoting at its target pays the same cost.
 - **Rejoin is by re-clone** (ADR-008). Restore tests that bring an old primary back must expect a `pg_basebackup`, not `pg_rewind`.
+
+### Phase notes from L4
+
+What L4 changes for L5 (monitoring). Evidence is in `docs/evidence/L4-restore.md` and `docs/evidence/L4-restore-history.md`.
+
+- **Alert on the backup and restore-test Jobs.** A failed `pg-backup` or `pg-restore-test` Job means an unverified backup. Alert on Job failure, and on the age of the last successful run (more than 26 h for either). Both Jobs exit non-zero on bad data, so Job status is enough. No log scraping is needed.
+- **Archive health is the earliest signal of PITR loss.** Alert when `pg_stat_archiver.failed_count` increases, and when `last_archived_time` is older than `archive_timeout` plus a margin. Allow about 2 minutes, because a Garage restart adds about 60 s. The L3 stall would have fired both within minutes. The `.ready` backlog (`pg_ls_archive_statusdir()`, granted to `pg_monitor`) gives the size of the gap.
+- **The restored cluster in `pg-restore` is temporary.** Its alerts must not page as production. Scope rules to namespace `pg-ha`, or label the namespaces.
+- **Re-clone rejoin.** A diverged member is re-cloned (ADR-008). It shows as not streaming for about 1 minute at this size, and for much longer on large data. Alert on a member not streaming for longer than the expected re-clone time, not on the first failed check.
+- **CoreDNS on the server node.** Alert when CoreDNS is not Ready. Its loss now coincides with an API-server outage, and promotion depends on it through `restore_command`.
+- **Restore-test resources.** The daily restore test (21:00 UTC, after the 20:00 backup) restores the whole database into emptyDir on a database node, with a 1 Gi memory limit. Disk and memory alerts on database nodes must allow for it, and its size grows with the database.
 - **L6:** The API egress policy must allow the API server's **real backend IP and port**. Allowing only the Service IP stays blocked, so the address must be discovered at deploy time.
 
 **SHOULD cut lines**

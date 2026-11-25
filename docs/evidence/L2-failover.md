@@ -13,7 +13,8 @@ RTO is fault injection to the first commit acknowledged by a new primary, measur
 | [storage](L2/storage.md) | PASS | min 2.39 s, median 3.37 s, max 3.69 s over 3 runs |
 | [split-brain](L2/split-brain.md) | PASS | min 20.47 s, median 22.18 s, max 22.20 s over 3 runs |
 | [switchover](L2/switchover.md) | PASS | min 2.08 s, median 2.08 s, max 2.08 s over 1 runs |
-| chain | not run | |
+| [chain](L2/chain.md) | PASS |  |
+| [diverge](L2/diverge.md) | PASS |  |
 | [api-outage](L2/api-outage.md) | PASS |  |
 
 ## pod: Result: PASS
@@ -89,9 +90,36 @@ RTO: min 20.47 s, median 22.18 s, max 22.20 s over 3 runs. Target 30 s.
 RTO: min 2.08 s, median 2.08 s, max 2.08 s over 1 runs. Target 30 s.
 
 
-## chain
+## chain: Result: PASS
 
-Not run yet.
+- **Fault:** Node failover (`docker stop` of the primary's agent), then a planned switchover back to the old primary after it has rejoined. This is the sequence that stalled WAL archiving in L3 when rejoin used `pg_rewind` (ADR-008). Archive health is checked on the returned primary.
+- Details: [`L2/chain.md`](L2/chain.md)
+
+
+| Step | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
+| node | pg-1 | pg-0 | 24.15 | 24.05 | 169 | 0 | 1 | restart only | 43.12 | k3d-pg-ha-server-0 | 0 | 2.37 | PASS |
+| switchover 1 | pg-0 | pg-2 | 3.60 | 3.59 | 92 | 0 | 1 | restart only | 9.99 | k3d-pg-ha-server-0 | 0 | 2.19 | PASS |
+| switchover 2 | pg-2 | pg-1 | 3.90 | 4.06 | 90 | 0 | 1 | restart only | 9.34 | k3d-pg-ha-server-0 | 0 | 3.77 | PASS |
+
+Second interval on `pg-1`: archived 2.79 s after a WAL fill, failed_count +0, pending .ready `-`.
+
+
+## diverge: Result: PASS
+
+- **Fault:** Diverge failover (replication from the primary blocked for a few seconds while it commits, then its node stopped), so the old primary holds WAL no replica received and must rejoin by re-clone (ADR-008). Then a planned switchover back to it, through the sync standby if needed. This is the original trigger of the L3 archiving stall. Archive health is checked on the returned primary.
+- **Fault:** Replication traffic from the primary pod to both replicas is dropped by iptables on its node for 5 s while the probe writes, so the primary writes WAL (commits that wait for the sync standby and are never acknowledged) that no replica receives. Then its k3d agent is stopped, as in the node mode, and started again once a new leader holds the lock. RTO counts from the start of the block. The old primary has diverged and must rejoin by re-clone (ADR-008).
+- Details: [`L2/diverge.md`](L2/diverge.md)
+
+
+| Step | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
+|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
+| diverge | pg-2 | pg-1 | 26.85 | 27.00 | 163 | 0 | 1 | re-clone | 54.10 | k3d-pg-ha-server-0 | 0 | 2.29 | PASS |
+| switchover 1 | pg-1 | pg-0 | 2.54 | 2.55 | 93 | 0 | 1 | restart only | 7.99 | k3d-pg-ha-server-0 | 0 | 1.64 | PASS |
+| switchover 2 | pg-0 | pg-2 | 2.51 | 2.58 | 93 | 0 | 1 | restart only | 7.86 | k3d-pg-ha-server-0 | 0 | 2.21 | PASS |
+
+Second interval on `pg-2`: archived 1.52 s after a WAL fill, failed_count +0, pending .ready `-`.
+
 
 ## api-outage: Result: PASS
 

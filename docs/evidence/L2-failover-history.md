@@ -25,6 +25,19 @@ All five modes passed on the final configuration: re-clone rejoin, CoreDNS pinne
 1. **13:31.** In synchronous mode Patroni switches over only to the sync standby (`candidate name does not match with sync_standby`), and the old primary was the async replica. The harness also died when a run measured no RTO (`grep` with no match under `pipefail`), and `client_up` accepted a test client still being deleted. All three are fixed: the chain now switches over through the sync standby, at most 3 hops.
 2. **13:39.** The steps all passed. The node failover took `pg-1` to `pg-0` with an RTO of 21.90 s, then switchover hops went `pg-0` to `pg-2` (2.61 s) and `pg-2` to `pg-1` (2.56 s). Each had RPO 0, one primary and a healthy archive check. Evidence: [`chain-node.md`](L2/chain-node.md), [`chain-switchover-1.md`](L2/chain-switchover-1.md), [`chain-switchover-2.md`](L2/chain-switchover-2.md). The script then died in its final section on the same `grep` pattern, when no `.ready` file was pending, so `L2/chain.md` was not written. That line is fixed but has not been rerun. The same checks run by hand on `pg-1` at 13:44 showed a segment archived 1.37 s after a WAL fill, no new failures, and no pending `.ready` file.
 
+## Chained scenario, third attempt (L4 step 0a, 15:21 to 15:25): PASS
+
+Authorised by the lead. The run passed on all checks and wrote [`L2/chain.md`](L2/chain.md). Node failover `pg-1` to `pg-0` took 24.15 s, then switchover hops `pg-0` to `pg-2` (3.60 s) and `pg-2` to `pg-1` (3.90 s). Every step had RPO 0 and a healthy archive check. In the second interval on `pg-1`, a segment was archived 2.79 s after the WAL fill with no new failures and no pending `.ready` file. Again no member diverged, so this run exercised the sequence but not the re-clone.
+
+## Forced divergence (L4 step 0b, 15:28 to 15:32): PASS, re-clone proven
+
+`make failover-diverge` reproduces the original trigger on purpose. iptables on the primary's node dropped replication traffic from `pg-2` to both replicas for 5 s while the probe wrote, so `pg-2` wrote commit records that no replica received and that were never acknowledged. Then its node was stopped.
+
+- `pg-1` took over with an RTO of 26.85 s, counted from the start of the block, with RPO 0 for acknowledged commits and never two primaries.
+- After its node restarted, `pg-2`'s Patroni logged `reinitializing due to diverged timelines` and `Removing data directory: /data/pgdata` at 15:29:12 to 15:29:13, and `replica has been created using basebackup` at 15:29:19. That is a re-clone, not a restart or `pg_rewind`.
+- Two switchover hops (`pg-1` to `pg-0` in 2.54 s, `pg-0` to `pg-2` in 2.51 s) made the re-cloned `pg-2` primary again. That is the exact situation that stalled archiving in L3. Archiving stayed healthy: no new failures, a segment archived 1.52 s after a WAL fill, and no pending `.ready` segment from an older timeline.
+- Evidence: [`L2/diverge.md`](L2/diverge.md), with the per-step files `diverge-diverge.md` and `diverge-switchover-{1,2}.md`.
+
 ## API outage rerun (L3, 07:53)
 
 The optional rerun of `make test-api-outage` with the fixed report guard passed all six checks. Its evidence is in [`L2/api-outage.md`](L2/api-outage.md). It was not repeated after the rebuild.

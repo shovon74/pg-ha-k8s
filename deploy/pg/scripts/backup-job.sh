@@ -4,8 +4,13 @@
 set -euo pipefail
 S=main
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
+# L4: data fingerprint, stored with the backup as annotations, for the restore test to compare (ADR-010).
+FP=$(PGPASSWORD="$APP_RO_PW" psql "host=pg-rw dbname=app user=app_ro connect_timeout=5" -XAtq -v ON_ERROR_STOP=1 -f /scripts/fingerprint.sql) ||
+  { say FINGERPRINT_FAILED; exit 1; }
+ANN=(); while IFS= read -r kv; do [ -z "$kv" ] || ANN+=("--annotation=$kv"); done <<<"$FP"
+say "fingerprint recorded as annotations: $(printf '%s ' $FP)"
 say "full backup"
-pgbackrest --stanza=$S --type=full --log-level-console=info backup > /tmp/backup.log 2>&1 || { cat /tmp/backup.log; say BACKUP_FAILED; exit 1; }
+pgbackrest --stanza=$S --type=full --log-level-console=info "${ANN[@]}" backup > /tmp/backup.log 2>&1 || { cat /tmp/backup.log; say BACKUP_FAILED; exit 1; }
 grep -E 'new backup label|full backup size|backup start archive|backup stop archive' /tmp/backup.log || true
 say "expire (repo1-retention-full from repo.conf, or PGBACKREST_REPO1_RETENTION_FULL for a test)"
 pgbackrest --stanza=$S --log-level-console=info expire > /tmp/expire.log 2>&1 || { cat /tmp/expire.log; say EXPIRE_FAILED; exit 1; }

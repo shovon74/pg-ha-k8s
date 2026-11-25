@@ -1,0 +1,17 @@
+# L4 (ADR-010): the whole cluster restored from the pgBackRest repository into an empty namespace, through
+# Patroni's custom bootstrap. Same manifests as deploy/pg, plus 30-restore.yml, which scripts/restore.sh
+# renders (bootstrap method, recovery target, archive_mode off). Rendered and applied by scripts/restore.sh.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pg-restore
+resources:
+  - ../pg
+patches:
+  # The namespace is created by scripts/restore.sh. A restored cluster takes no backups of its own.
+  - patch: '{"$patch": "delete", "apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "pg-ha"}}'
+  - patch: '{"$patch": "delete", "apiVersion": "batch/v1", "kind": "CronJob", "metadata": {"name": "pg-backup"}}'
+  - patch: '{"$patch": "delete", "apiVersion": "batch/v1", "kind": "CronJob", "metadata": {"name": "pg-restore-test"}}'
+configMapGenerator:
+  - name: pg-patroni
+    behavior: merge
+    files: [30-restore.yml]

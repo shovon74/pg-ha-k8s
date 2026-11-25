@@ -57,3 +57,4 @@ pg-2 (sync):    (none)
 - The failover harness now checks archive health after every run, and `make failover-chain` repeats the failover-then-switchover-back sequence. Results are in [`L2-failover-history.md`](L2-failover-history.md).
 - **R4.6 rerun (13:36 to 13:39), PASS:** node failover with an RTO of 23.09 s, archiving on the new timeline with no failures, `pgbackrest check`, then a backup with verify status ok, started on the new timeline.
 - **Limit:** no failover in the rerun diverged, so the re-clone path itself was not exercised, and the exact rewind-then-promote trigger of the stall has not been reproduced. R4.6 is met for every sequence run (13 failovers and switchovers plus the chain), but a forced divergence test is still open.
+- **Closed in L4 (15:28 to 15:32):** `make failover-diverge` forced a divergence. The old primary rejoined by re-clone, became primary again, and archived with no failures. See [`L2-failover-history.md`](L2-failover-history.md).

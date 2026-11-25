@@ -10,6 +10,8 @@ for f in "$C"/pg-{postgres,replicator,rewind,monitor,backup,app,app_ro}-password
 done
 BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 20 * * *}   # ADR-009: daily at 20:00 UTC unless overridden
 [[ "$BACKUP_SCHEDULE" =~ ^[0-9*/,-]+( [0-9*/,-]+){4}$ ]] || die "BACKUP_SCHEDULE must be a 5-field cron expression"
+RESTORE_TEST_SCHEDULE=${RESTORE_TEST_SCHEDULE:-0 21 * * *}   # ADR-010: daily, after the backup
+[[ "$RESTORE_TEST_SCHEDULE" =~ ^[0-9*/,-]+( [0-9*/,-]+){4}$ ]] || die "RESTORE_TEST_SCHEDULE must be a 5-field cron expression"
 
 # ADR-001: cluster DNS is infrastructure, so it runs on the server node with Garage, never on a database
 # node. k3s schedules its single CoreDNS replica anywhere. When that was the primary's node, a node failure
@@ -30,7 +32,7 @@ secret pg-credentials $(for r in postgres replicator rewind monitor backup app a
 secret pg-tls --from-file=tls.crt="$T/postgres-server.crt" --from-file=tls.key="$T/postgres-server.key" --from-file=ca.crt="$T/ca.crt"
 secret pgbackrest-tls --from-file=server.crt="$T/pgbackrest-server.crt" --from-file=server.key="$T/pgbackrest-server.key" \
   --from-file=client.crt="$T/pgbackrest-client.crt" --from-file=client.key="$T/pgbackrest-client.key" --from-file=ca.crt="$T/ca.crt"
-kubectl kustomize "$ROOT_DIR/deploy/pg" | sed "s|__PG_IMAGE__|$PG_IMAGE|; s|__BACKUP_SCHEDULE__|'$BACKUP_SCHEDULE'|" | kubectl apply -f -
+kubectl kustomize "$ROOT_DIR/deploy/pg" | sed "s|__PG_IMAGE__|$PG_IMAGE|; s|__BACKUP_SCHEDULE__|'$BACKUP_SCHEDULE'|; s|__RESTORE_TEST_SCHEDULE__|'$RESTORE_TEST_SCHEDULE'|" | kubectl apply -f -
 
 kubectl -n "$PG_NS" rollout status "statefulset/$PG_STS" --timeout=600s
 end=$((SECONDS + ${PG_WAIT:-180}))
@@ -45,4 +47,4 @@ out=$(JOB_WAIT=300 "$ROOT_DIR/scripts/pgbr-job.sh" pg-stanza-create \
   'pgbackrest --stanza=main --log-level-console=info stanza-create && pgbackrest --stanza=main --log-level-console=info check && echo STANZA_OK') ||
   { printf '%s\n' "$out" | tail -20; die "stanza-create or check failed"; }
 printf '%s\n' "$out" | grep -E 'stanza-create command end|check command end|already exists|STANZA_OK' || true
-log "Backup schedule: $BACKUP_SCHEDULE (UTC)"
+log "Backup schedule: $BACKUP_SCHEDULE (UTC), restore test: $RESTORE_TEST_SCHEDULE (UTC)"

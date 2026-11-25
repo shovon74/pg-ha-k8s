@@ -22,7 +22,11 @@ The whole cluster must restore into an empty namespace, support PITR to a timest
 ## Consequences
 
 - A passing test exercises the real recovery path.
-- Restored role passwords must be reset through `post_bootstrap`, to be confirmed during implementation.
+- **Confirmed in L4:** Patroni runs `post_bootstrap` after a custom bootstrap too, and resets the superuser, replicator and rewind passwords itself. `post-bootstrap.sh` is create-or-alter: on a restored cluster it resets the `monitor`, `backup`, `app` and `app_ro` passwords to the target namespace's Secret.
+- **Implementation (L4):**
+  - `scripts/restore.sh` renders `deploy/restore/30-restore.yml`: bootstrap method `pgbackrest`, recovery target and timeline, and `archive_mode: "off"`.
+  - `restore-bootstrap.sh` lets pgBackRest choose the backup set. It then removes the recovery settings pgBackRest wrote to `postgresql.auto.conf`, so Patroni's `recovery_conf` drives recovery, and nothing is copied to replicas or kept after promotion.
+- **Restore test data check (L4):** the backup Job records a fingerprint (row counts and `hashtext` sums of the seeded tables) as pgBackRest annotations on each backup. The restore test restores that backup with `--type=immediate` and compares the fingerprint. Its reading role, `app_ro`, is the only database credential the backup Job holds.
 - In-cluster object storage is lost with the cluster, so this proves namespace-level recovery and not off-site disaster recovery.
 
 ## R-IDs covered

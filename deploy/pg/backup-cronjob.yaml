@@ -30,6 +30,8 @@ spec:
               command: [bash, /scripts/backup-job.sh]
               env:
                 - {name: HOME, value: /tmp}
+                - name: APP_RO_PW          # L4: read-only role for the data fingerprint (fingerprint.sql)
+                  valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-app_ro-password}}
               envFrom:
                 - secretRef: {name: pgbackrest-repo}
               securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
