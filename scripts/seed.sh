@@ -13,6 +13,7 @@ spec:
   backoffLimit: 0
   ttlSecondsAfterFinished: 3600
   template:
+    metadata: {labels: {app.kubernetes.io/name: pg-seed, pg-ha/db-client: "true"}}   # L6: NetworkPolicy client label
     spec:
       restartPolicy: Never
       securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, seccompProfile: {type: RuntimeDefault}}

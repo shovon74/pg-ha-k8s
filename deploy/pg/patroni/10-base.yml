@@ -4,6 +4,10 @@
 scope: pg-rw            # Patroni names the leader Endpoints after the scope, so this is the pg-rw Service
 restapi:
   listen: 0.0.0.0:8008
+  # L6 (ADR-012): with authentication set, Patroni requires HTTP basic auth for every state-changing request
+  # (POST, PUT, PATCH, DELETE: switchover, failover, restart, reinitialize, config, ...). GET stays open, so the
+  # kubelet probes (/readiness, /liveness), Prometheus (/metrics) and scripts/status.sh (/cluster) are unchanged.
+  # Username and password come from PATRONI_RESTAPI_USERNAME and PATRONI_RESTAPI_PASSWORD (pg-credentials).
 kubernetes:             # ADR-002
   use_endpoints: true
   labels: {app.kubernetes.io/name: pg, cluster-name: pg-rw}
@@ -47,16 +51,35 @@ postgresql:
   # files without archive status, and after a later promotion they blocked archiving ("different checksum").
   # The divergence check still connects as the rewind role.
   remove_data_directory_on_diverged_timelines: true
+  # L6 (ADR-012, R8.4): replication (streaming, pg_basebackup re-clone) and the rewind role's divergence check
+  # connect over TLS and verify the server certificate against the L0 CA and the member's DNS name. Usernames
+  # and passwords still come from the environment; Patroni deep-merges these keys with them.
+  authentication:
+    replication:
+      sslmode: verify-full
+      sslrootcert: /etc/pg-tls/ca.crt
+    rewind:
+      sslmode: verify-full
+      sslrootcert: /etc/pg-tls/ca.crt
   parameters:
     unix_socket_directories: /var/run/postgresql
-    # Server TLS on with the L0 certificate. hostssl enforcement waits for L6.
+    # Server TLS with the L0 certificate (SANs: pg-N.pg-headless, pg-rw, pg-ro in pg-ha and pg-restore).
     ssl: "on"
     ssl_cert_file: /etc/pg-tls/tls.crt
     ssl_key_file: /etc/pg-tls/tls.key
     ssl_ca_file: /etc/pg-tls/ca.crt
+    ssl_min_protocol_version: TLSv1.2
+  # L6 (ADR-012, R8.4, R8.5): first match wins. Every connection from the pod network must use TLS and SCRAM.
+  # Loopback stays host (TLS optional) for the exporter sidecar (monitor, sslmode=require) and Patroni's local
+  # replication check; that traffic never leaves the pod. Nobody logs in remotely as the superuser: Patroni,
+  # post_bootstrap and pgBackRest use the local socket. Anything else, including any non-TLS remote attempt,
+  # is rejected explicitly.
   pg_hba:
     - local all all peer
     - host replication replicator 127.0.0.1/32 scram-sha-256   # Patroni's local timeline check on replicas
-    - host replication replicator 10.42.0.0/16 scram-sha-256
-    - host all all 10.42.0.0/16 scram-sha-256
-    - host all all 127.0.0.1/32 scram-sha-256
+    - host all all 127.0.0.1/32 scram-sha-256                  # exporter sidecar (monitor) and local tools
+    - hostssl all postgres 0.0.0.0/0 reject
+    - hostssl replication replicator 10.42.0.0/16 scram-sha-256
+    - hostssl all all 10.42.0.0/16 scram-sha-256
+    - host all all 0.0.0.0/0 reject
+    - host replication all 0.0.0.0/0 reject

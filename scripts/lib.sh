@@ -28,6 +28,8 @@ cluster_exists() { k3d cluster list -o json | jq -e --arg n "$CLUSTER_NAME" 'any
 PG_NS=pg-ha
 PG_STS=pg
 # Patroni's /cluster view, read through the API server's pod proxy, so no kubectl exec is needed (D4).
+# L6: GET endpoints stay unauthenticated by design; only state-changing requests need the REST API credential
+# (tests/failover.sh switchover, tests/test-security.sh). NetworkPolicy admits the proxy's source addresses.
 patroni_cluster() {
   local i out
   for i in 0 1 2; do

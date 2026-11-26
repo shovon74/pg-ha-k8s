@@ -46,7 +46,7 @@ kubectl -n "$NS" delete pod "$CLIENT" --ignore-not-found --wait=true >/dev/null
 sed "s|__PG_IMAGE__|$PG_IMAGE|" <<'YAML' | kubectl -n "$NS" apply -f - >/dev/null
 apiVersion: v1
 kind: Pod
-metadata: {name: pg-test-client, labels: {app.kubernetes.io/name: pg-test-client}}
+metadata: {name: pg-test-client, labels: {app.kubernetes.io/name: pg-test-client, pg-ha/db-client: "true"}}
 spec:
   restartPolicy: Never
   terminationGracePeriodSeconds: 0

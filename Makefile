@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help preflight tools certs secrets cluster image up down status clean-secrets \
+.PHONY: help preflight tools certs secrets cluster image up down status clean-secrets netpol test-security \
         deploy backup restore restore-clean test-restore test-restore-full test-pitr test-restore-schedule test-l4 monitoring alerts test-alerts test-metrics alerts-failover alerts-archive test-l5 prometheus-ui alertmanager-ui seed test-replication failover-pod failover-node failover-storage test-split-brain switchover failover-chain failover-diverge test-failover test-api-outage \
         test-archive test-backup-schedule test-retention test-backup-failover test-garage-restart test-backup spike-s1 spike-s2 spike-s3 spike-s4 spikes
 
@@ -41,6 +41,9 @@ restore: ## L4: restore the whole cluster into NS=pg-restore [TARGET_TIME='YYYY-
 
 restore-clean: ## L4: delete only the pg-restore namespace and its PVCs
 	@scripts/restore-clean.sh
+
+netpol: ## L6: render (API backend and proxy addresses discovered live) and apply the NetworkPolicies
+	@scripts/netpol.sh
 
 monitoring: ## L5: Prometheus, Alertmanager, kube-state-metrics, node_exporter; waits until all targets are up
 	@scripts/monitoring.sh
@@ -130,6 +133,9 @@ test-restore-schedule: ## L4 R4.5: a restore-test Job created by the CronJob its
 	@tests/l4-restore-scheduled.sh
 
 test-l4: test-restore-full test-pitr test-restore test-restore-schedule ## L4 gate: all of the above
+
+test-security: ## L6 gate: TLS, SCRAM, roles, NetworkPolicy, REST API auth, Pod Security, RBAC, git credential scan
+	@tests/test-security.sh
 
 status: ## Show nodes, resource use, Patroni members, lag and the sync standby
 	@scripts/status.sh

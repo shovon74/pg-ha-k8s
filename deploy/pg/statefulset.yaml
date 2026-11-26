@@ -65,6 +65,10 @@ spec:
             - {name: PATRONI_REWIND_USERNAME, value: rewind}
             - name: PATRONI_REWIND_PASSWORD
               valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-rewind-password}}
+            # L6: basic auth for Patroni's state-changing REST endpoints (10-base.yml, restapi).
+            - {name: PATRONI_RESTAPI_USERNAME, value: patroni}
+            - name: PATRONI_RESTAPI_PASSWORD
+              valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-restapi-password}}
             # Used once by post-bootstrap.sh to create the remaining roles.
             - name: PG_MONITOR_PASSWORD
               valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-monitor-password}}

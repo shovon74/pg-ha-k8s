@@ -8,7 +8,7 @@ metadata: {name: pg-probe}
 spec:
   backoffLimit: 0
   template:
-    metadata: {labels: {app.kubernetes.io/name: pg-probe}}
+    metadata: {labels: {app.kubernetes.io/name: pg-probe, pg-ha/db-client: "true"}}
     spec:
       restartPolicy: Never
       nodeSelector: {pg-ha/role: infra}     # the probe must survive agent failures

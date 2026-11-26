@@ -1,0 +1,100 @@
+# L6 (ADR-012, R8.6): default deny in monitoring and monitoring-host, with the paths listed in the L5 phase
+# notes (docs/01-design-options.md). Rendered by scripts/netpol.sh (placeholders as in pg-ha.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: monitoring}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-dns-egress, namespace: monitoring}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+# Prometheus: its UI and API through the API server's service proxy (make alerts, make monitoring, L5 tests).
+# It scrapes the members (8008, 9187), node_exporter (9100), kube-state-metrics (8080, 8081) and Alertmanager
+# (9093), sends alerts to Alertmanager, and discovers pods through the API server. Its self-scrape is localhost.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: prometheus, namespace: monitoring}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - ipBlock: {cidr: __PROXY_NODE__/32}
+        - ipBlock: {cidr: __PROXY_TUNNEL__/32}
+        - ipBlock: {cidr: __PROXY_BRIDGE__/32}
+      ports: [{protocol: TCP, port: 9090}]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: pg-ha}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: pg}}
+      ports: [{protocol: TCP, port: 8008}, {protocol: TCP, port: 9187}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring-host}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: node-exporter}}
+      ports: [{protocol: TCP, port: 9100}]
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: kube-state-metrics}}}]
+      ports: [{protocol: TCP, port: 8080}, {protocol: TCP, port: 8081}]
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: alertmanager}}}]
+      ports: [{protocol: TCP, port: 9093}]
+    - to: [{ipBlock: {cidr: __API_IP__/32}}]
+      ports: [{protocol: TCP, port: __API_PORT__}]
+---
+# Alertmanager: from Prometheus and the API server's proxy. No receivers, so no egress beyond DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: alertmanager, namespace: monitoring}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: alertmanager}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+        - ipBlock: {cidr: __PROXY_NODE__/32}
+        - ipBlock: {cidr: __PROXY_TUNNEL__/32}
+        - ipBlock: {cidr: __PROXY_BRIDGE__/32}
+      ports: [{protocol: TCP, port: 9093}]
+---
+# kube-state-metrics: scraped by Prometheus; lists and watches through the API server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: kube-state-metrics, namespace: monitoring}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: kube-state-metrics}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}}]
+      ports: [{protocol: TCP, port: 8080}, {protocol: TCP, port: 8081}]
+  egress:
+    - to: [{ipBlock: {cidr: __API_IP__/32}}]
+      ports: [{protocol: TCP, port: __API_PORT__}]
+---
+# monitoring-host (node_exporter, the documented Pod Security exception): scraped by Prometheus, no egress at all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: monitoring-host}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: node-exporter, namespace: monitoring-host}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: node-exporter}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+      ports: [{protocol: TCP, port: 9100}]

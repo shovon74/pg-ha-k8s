@@ -9,6 +9,8 @@ kubectl get ns "$PG_NS" >/dev/null 2>&1 || die "namespace $PG_NS not found, run:
 kubectl kustomize "$ROOT_DIR/deploy/monitoring" |
   sed "s|__PROMETHEUS_IMAGE__|$PROMETHEUS_IMAGE|; s|__ALERTMANAGER_IMAGE__|$ALERTMANAGER_IMAGE|; s|__KUBE_STATE_METRICS_IMAGE__|$KUBE_STATE_METRICS_IMAGE|; s|__NODE_EXPORTER_IMAGE__|$NODE_EXPORTER_IMAGE|" |
   kubectl apply -f - | grep -v unchanged || true
+# L6 (R8.6): NetworkPolicies for monitoring and monitoring-host (and pg-ha, unchanged if already applied).
+"$ROOT_DIR/scripts/netpol.sh"
 for d in prometheus alertmanager kube-state-metrics; do kubectl -n monitoring rollout status "deployment/$d" --timeout=300s >/dev/null; done
 kubectl -n monitoring-host rollout status daemonset/node-exporter --timeout=300s >/dev/null
 

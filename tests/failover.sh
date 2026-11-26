@@ -23,9 +23,10 @@
 #                the primary writes WAL that no replica receives. Then docker stop the agent, as in node mode.
 #                The new primary is promoted behind the old one, so the old primary has diverged and must
 #                rejoin by re-clone. The rules go with the stopped container and are deleted again anyway.
-#   switchover   POST /switchover to the leader's Patroni REST API over kubectl port-forward and curl
-#                (the REST API is unauthenticated until L6). The API server pod proxy is not used for this
-#                POST because Patroni rejects its request without a Content-Length header (HTTP 411).
+#   switchover   POST /switchover to the leader's Patroni REST API over kubectl port-forward and curl, with
+#                basic auth (L6). The credential is read from ./secrets and handed to curl on stdin (-K -), so
+#                it never appears on a command line or in the evidence. The API server pod proxy is not used
+#                for this POST because Patroni rejects its request without a Content-Length header (HTTP 411).
 # psql runs only in the test client pod, never in a Postgres pod.
 #
 # After every run (L3): WAL archive health on the current primary. Its pg_stat_archiver.failed_count must not
@@ -130,7 +131,8 @@ for N in $(seq 1 "$RUNS"); do
       printf '{"leader": "%s", "candidate": "%s"}' "$OLD" "$TARGET" > "$R/body.json"
       PFPORT=$((18000 + RANDOM % 1000)); kubectl -n "$NS" port-forward "pod/$OLD" "$PFPORT:8008" >/dev/null 2>&1 & PF=$!
       wait_until 10 curl -s -o /dev/null "http://127.0.0.1:$PFPORT/liveness" || true
-      T_FAULT=$(now); curl -sS -m 60 -X POST -H 'Content-Type: application/json' --data-binary @"$R/body.json" "http://127.0.0.1:$PFPORT/switchover" > "$R/switchover.txt" 2>&1 || true
+      T_FAULT=$(now); printf 'user = "patroni:%s"\n' "$(cat "$SECRETS_DIR/credentials/pg-restapi-password")" |
+        curl -sS -m 60 -K - -X POST -H 'Content-Type: application/json' --data-binary @"$R/body.json" "http://127.0.0.1:$PFPORT/switchover" > "$R/switchover.txt" 2>&1 || true
       kill $PF 2>/dev/null || true; wait $PF 2>/dev/null || true ;;
   esac
   note "Fault at $(iso "$T_FAULT") UTC on primary \`$OLD\` ($OLD_IP, node \`$OLD_NODE\`, timeline $TL0). Sync standby before: \`$SYNC\`. CoreDNS on \`$CDNS\`."
@@ -219,7 +221,7 @@ case "$MODE" in
   storage) DESC='The primary'"'"'s data volume is made unavailable inside its container: `/data` is lazily unmounted in the Postgres container'"'"'s mount namespace (`docker exec <agent> nsenter -t <pid> -m umount -l /data`) and the postmaster is killed with SIGKILL, so Patroni cannot restart Postgres. It is restored by deleting the pod once a new leader holds the lock, so the kubelet mounts the volume again. **Limits:** a running Postgres does not notice a detached directory because it works relative to its open data directory, so the SIGKILL stands in for the I/O error or PANIC a real disk failure would cause. The data on the volume is intact, so this is not a lost or corrupted disk, and a hung disk that blocks I/O without failing is not shown. A read-only remount was tried first and refused (`mount point is busy`), because Postgres holds its files open for writing.' ;;
   split-brain) DESC='An iptables rule on the primary'"'"'s node drops only the primary pod'"'"'s traffic to the API server backend (the S2 finding: policy and filtering see the real backend address). Replication and client traffic are untouched, so the old primary can still reach its sync standby and acknowledge commits until it demotes itself. The rule is removed afterwards.' ;;
   diverge) DESC='Replication traffic from the primary pod to both replicas is dropped by iptables on its node for '"${DIVERGE_HOLD:-5}"' s while the probe writes, so the primary writes WAL (commits that wait for the sync standby and are never acknowledged) that no replica receives. Then its k3d agent is stopped, as in the node mode, and started again once a new leader holds the lock. RTO counts from the start of the block. The old primary has diverged and must rejoin by re-clone (ADR-008).' ;;
-  switchover) DESC='`POST /switchover` to the leader'"'"'s Patroni REST API over `kubectl port-forward` and `curl`, naming the target (default the current sync standby). No exec is used. The API server pod proxy was tried first and refused with HTTP 411, because Patroni requires a Content-Length header that the proxy does not forward. **The REST API is unauthenticated until L6.**' ;;
+  switchover) DESC='`POST /switchover` to the leader'"'"'s Patroni REST API over `kubectl port-forward` and `curl`, naming the target (default the current sync standby). No exec is used. The API server pod proxy was tried first and refused with HTTP 411, because Patroni requires a Content-Length header that the proxy does not forward. Since L6 the POST carries basic auth (user `patroni`, password from `./secrets`, passed to curl on stdin); unauthenticated state-changing requests are refused (`make test-security`).' ;;
 esac
 { printf '# L2 failure mode: %s\n\n**Result: %s**\n\n' "$MODE" "$verdict"
   printf -- '- **Fault:** %s\n' "$DESC"

@@ -3,7 +3,7 @@
 **Result: PASS**
 
 - **What:** `promtool check rules` and `promtool test rules` from the pinned Prometheus image, plus checks that every rule has a severity, a summary and a reason for its threshold, and that every alert has a test where it fires and one where it stays silent. The tests run against a copy of the rules without annotations, so they check labels and timing. No cluster is needed.
-- **Run:** 2026-11-25T16:52:30Z (UTC), 4 s
+- **Run:** 2026-11-25T17:26:19Z (UTC), 4 s
 - **Reproduce:** `make test-alerts`
 - **Versions:** promtool from `prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06`
 
@@ -19,7 +19,7 @@
 ## promtool check rules
 
 ```console
-$ promtool '/tmp/tmp.eqFLViZwkQ' check rules orig.rules.yml
+$ promtool '/tmp/tmp.6aT7gotka9' check rules orig.rules.yml
 Checking orig.rules.yml
   SUCCESS: 19 rules found
 ```
@@ -53,7 +53,7 @@ Checking orig.rules.yml
 ## promtool test rules
 
 ```console
-$ promtool '/tmp/tmp.eqFLViZwkQ' test rules pg-ha.test.yml
+$ promtool '/tmp/tmp.6aT7gotka9' test rules pg-ha.test.yml
 Processing test file: pg-ha.test.yml
   SUCCESS
 ```

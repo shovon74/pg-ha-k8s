@@ -16,6 +16,7 @@ gen() { # name openssl-rand-args...
 }
 
 for r in postgres replicator rewind monitor backup app app_ro; do gen "pg-$r-password" -hex 24; done
+gen pg-restapi-password -hex 24     # L6: basic auth for Patroni's state-changing REST endpoints
 gen pgbackrest-cipher-passphrase -base64 48
 gen garage-rpc-secret -hex 32        # Garage requires exactly 32 bytes in hex
 gen garage-admin-token -hex 32

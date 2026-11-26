@@ -16,7 +16,7 @@ spec:
       backoffLimit: 0
       activeDeadlineSeconds: 3600
       template:
-        metadata: {labels: {app.kubernetes.io/name: pg-backup}}
+        metadata: {labels: {app.kubernetes.io/name: pg-backup, pg-ha/db-client: "true"}}   # L6: fingerprint query through pg-rw
         spec:
           restartPolicy: Never
           enableServiceLinks: false

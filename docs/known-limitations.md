@@ -54,3 +54,28 @@ node_exporter needs a read-only hostPath mount of the node's root filesystem to 
 
 - **Why:** disk space has no other source here. local-path volumes report no volume statistics.
 - **Decision:** ADR-011, documented exception for R8.7.
+
+## Security
+
+The full lists of what is implemented and what is left out are in [`security.md`](security.md). These are the gaps a reviewer is most likely to ask about.
+
+### Object-storage traffic and the Patroni REST API are not TLS
+
+Garage has no native TLS, so S3 requests cross the pod network in clear. The repository content is encrypted (`aes-256-cbc`) and SigV4 keeps the secret key off the wire, but object names and sizes are visible. Patroni's REST API uses basic auth for state-changing calls over plain HTTP. In both cases, NetworkPolicy limits who can reach the port.
+
+- **In production:** an off-site repository over HTTPS (R4.7), and `restapi` TLS for Patroni.
+- **Decision:** ADR-014, ADR-012.
+
+### No secret rotation tooling, and Secrets are not encrypted at rest
+
+Credentials are generated once per deployment. Rotation is a manual file replacement followed by `make deploy` and a role password reset. k3s stores Secrets unencrypted in its datastore on the same VM.
+
+- **In production:** an external secret store with rotation, and KMS envelope encryption for Secrets.
+- **Decision:** ADR-012 (layered baseline, not full hardening).
+
+### The restored cluster in `pg-restore` has no NetworkPolicies
+
+`make restore` creates a temporary namespace with a copy of production data and no policies. Pod Security is not enforced there either, because the namespace has no label, although its pods come from the same restricted-compliant manifests. It is deleted by `make restore-clean`.
+
+- **In production:** apply the same rendered policies to the restore namespace, or restore into an isolated cluster.
+- **Decision:** L6, `security.md`.

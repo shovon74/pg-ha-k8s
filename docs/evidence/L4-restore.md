@@ -8,7 +8,7 @@ Hand-written notes: [`L4-restore-history.md`](L4-restore-history.md).
 |---|---|---:|---|
 | Full restore into an empty namespace (R5.1) | PASS | 10 of 10 | [`L4/restore-full.md`](L4/restore-full.md) |
 | Point-in-time recovery (R5.3) | PASS | 7 of 7 | [`L4/pitr.md`](L4/pitr.md) |
-| Restore test Job, on demand (R4.5, R5.4) | PASS | 6 of 6 | [`L4/restore-test.md`](L4/restore-test.md) |
+| Restore test Job, on demand (R4.5, R5.4) | FAIL | 5 of 6 | [`L4/restore-test.md`](L4/restore-test.md) |
 | Restore test Job, scheduled (R4.5) | PASS | 4 of 4 | [`L4/restore-scheduled.md`](L4/restore-scheduled.md) |
 
 ## Full restore into an empty namespace (R5.1)
@@ -48,7 +48,7 @@ Hand-written notes: [`L4-restore-history.md`](L4-restore-history.md).
 
 | Check | Result |
 |---|---|
-| Backup with verify ok, fingerprint recorded as annotations | PASS |
+| Backup with verify ok, fingerprint recorded as annotations | **FAIL** |
 | The restore test Job succeeded (RESTORE_TEST_OK) | PASS |
 | Every fingerprint value matched the one recorded at backup time | PASS |
 | pg_amcheck ran on the scratch copy and reported no corruption | PASS |

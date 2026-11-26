@@ -27,6 +27,7 @@ metadata: {name: pg-api-probe}
 spec:
   backoffLimit: 0
   template:
+    metadata: {labels: {app.kubernetes.io/name: pg-api-probe, pg-ha/db-client: "true"}}   # L6: NetworkPolicy client label
     spec:
       restartPolicy: Never
       nodeSelector: {pg-ha/role: db}

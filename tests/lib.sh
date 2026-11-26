@@ -28,7 +28,7 @@ client_up() {
   sed "s|__PG_IMAGE__|$PG_IMAGE|" <<'YAML' | kubectl -n "$NS" apply -f - >/dev/null
 apiVersion: v1
 kind: Pod
-metadata: {name: pg-test-client, labels: {app.kubernetes.io/name: pg-test-client}}
+metadata: {name: pg-test-client, labels: {app.kubernetes.io/name: pg-test-client, pg-ha/db-client: "true"}}
 spec:
   restartPolicy: Never
   terminationGracePeriodSeconds: 0
@@ -47,8 +47,13 @@ spec:
       valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-app-password}}
     - name: MON_PW
       valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-monitor-password}}
-    volumeMounts: [{name: tmp, mountPath: /tmp}]
-  volumes: [{name: tmp, emptyDir: {}}]
+    - name: APP_RO_PW          # L6: read-only role checks (tests/test-security.sh)
+      valueFrom: {secretKeyRef: {name: pg-credentials, key: pg-app_ro-password}}
+    volumeMounts: [{name: tmp, mountPath: /tmp}, {name: ca, mountPath: /etc/pg-ca, readOnly: true}]
+  volumes:
+  - {name: tmp, emptyDir: {}}
+  # L6: only the CA certificate (no key), so clients can connect with sslmode=verify-full.
+  - {name: ca, secret: {secretName: pg-tls, items: [{key: ca.crt, path: ca.crt}]}}
 YAML
   kubectl -n "$NS" wait --for=condition=Ready "pod/$CLIENT" --timeout=90s >/dev/null || die "client pod not ready"
 }

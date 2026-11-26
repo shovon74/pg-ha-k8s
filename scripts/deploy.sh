@@ -4,7 +4,7 @@
 . "$(dirname "$0")/lib.sh"
 cluster_exists || die "cluster $CLUSTER_NAME not found, run: make cluster"
 C="$SECRETS_DIR/credentials"; T="$SECRETS_DIR/tls"
-for f in "$C"/pg-{postgres,replicator,rewind,monitor,backup,app,app_ro}-password \
+for f in "$C"/pg-{postgres,replicator,rewind,monitor,backup,app,app_ro,restapi}-password \
          "$T"/{ca.crt,postgres-server.crt,postgres-server.key,pgbackrest-server.crt,pgbackrest-server.key,pgbackrest-client.crt,pgbackrest-client.key}; do
   [ -s "$f" ] || die "missing $f, run: make certs secrets"
 done
@@ -21,6 +21,10 @@ RESTORE_TEST_SCHEDULE=${RESTORE_TEST_SCHEDULE:-0 21 * * *}   # ADR-010: daily, a
 kubectl -n kube-system patch deployment coredns --type=merge -p '{"spec":{"template":{"spec":{"nodeSelector":{"pg-ha/role":"infra"}}}}}' >/dev/null
 kubectl -n kube-system rollout status deployment/coredns --timeout=120s >/dev/null
 
+# L6 (R8.6): default-deny NetworkPolicies with explicit allows, in place before any workload starts.
+kubectl apply -f "$ROOT_DIR/deploy/pg/namespace.yaml" >/dev/null
+"$ROOT_DIR/scripts/netpol.sh"
+
 # L3: Garage first, so WAL archiving has somewhere to go as soon as Postgres starts (ADR-014).
 "$ROOT_DIR/scripts/garage.sh"
 
@@ -28,7 +32,7 @@ kubectl apply -f "$ROOT_DIR/deploy/pg/namespace.yaml" >/dev/null
 # Server-side apply keeps secret values out of the last-applied annotation.
 secret() { kubectl -n "$PG_NS" create secret generic "$@" --dry-run=client -o yaml |
   kubectl apply --server-side --field-manager=pg-ha-deploy --force-conflicts -f - >/dev/null; }
-secret pg-credentials $(for r in postgres replicator rewind monitor backup app app_ro; do printf -- '--from-file=%s ' "$C/pg-$r-password"; done)
+secret pg-credentials $(for r in postgres replicator rewind monitor backup app app_ro restapi; do printf -- '--from-file=%s ' "$C/pg-$r-password"; done)
 secret pg-tls --from-file=tls.crt="$T/postgres-server.crt" --from-file=tls.key="$T/postgres-server.key" --from-file=ca.crt="$T/ca.crt"
 secret pgbackrest-tls --from-file=server.crt="$T/pgbackrest-server.crt" --from-file=server.key="$T/pgbackrest-server.key" \
   --from-file=client.crt="$T/pgbackrest-client.crt" --from-file=client.key="$T/pgbackrest-client.key" --from-file=ca.crt="$T/ca.crt"

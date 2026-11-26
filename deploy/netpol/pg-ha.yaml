@@ -1,0 +1,148 @@
+# L6 (ADR-012, R8.6): default deny for ingress and egress in pg-ha (Postgres and Garage, ADR-014), then one
+# allow per real path. Rendered by scripts/netpol.sh, which discovers at deploy time:
+#   __API_IP__ __API_PORT__  the API server's real backend (S2: allowing only the Service IP stays blocked)
+#   __PROXY_NODE__ __PROXY_TUNNEL__ __PROXY_BRIDGE__  the server node's InternalIP, flannel tunnel address and
+#       cni0 address. The API server's pod proxy (kubectl get --raw .../proxy, used by make status, the
+#       patroni_cluster helper and the tests) comes from one of these, depending on where the pod runs.
+# Kubelet probes come from the pod's own node, which kube-router (the k3s policy controller) always allows.
+# kubectl port-forward enters the pod's network namespace directly, so policies do not apply to it.
+# These policies are not part of deploy/pg, so the restored cluster in pg-restore (deploy/restore) has none.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: pg-ha}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-dns-egress, namespace: pg-ha}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+# Postgres members: who may connect to them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: pg-ingress, namespace: pg-ha}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: pg}}
+  policyTypes: [Ingress]
+  ingress:
+    # 5432: replication and re-clone between members; database clients through pg-rw and pg-ro. A client is a
+    # pod labelled pg-ha/db-client=true in pg-ha (test client, probe, seed, backup Job), or in a namespace that
+    # carries the same label (application namespaces).
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: pg}}
+        - podSelector: {matchLabels: {pg-ha/db-client: "true"}}
+        - namespaceSelector: {matchLabels: {pg-ha/db-client: "true"}}
+          podSelector: {matchLabels: {pg-ha/db-client: "true"}}
+      ports: [{protocol: TCP, port: 5432}]
+    # 8008 Patroni REST API: other members (leader race, /patroni), Prometheus (/metrics), the API server's pod
+    # proxy (/cluster). State-changing endpoints also require basic auth (10-base.yml).
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: pg}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+        - ipBlock: {cidr: __PROXY_NODE__/32}
+        - ipBlock: {cidr: __PROXY_TUNNEL__/32}
+        - ipBlock: {cidr: __PROXY_BRIDGE__/32}
+      ports: [{protocol: TCP, port: 8008}]
+    # 9187 postgres_exporter: Prometheus only.
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+      ports: [{protocol: TCP, port: 9187}]
+    # 8432 pgBackRest TLS server: the backup, stanza and check Jobs only (they also present a client cert).
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: pg-backup}}
+      ports: [{protocol: TCP, port: 8432}]
+---
+# Postgres members: where they may connect.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: pg-egress, namespace: pg-ha}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: pg}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: pg}}}]
+      ports: [{protocol: TCP, port: 5432}, {protocol: TCP, port: 8008}]
+    # archive-push and archive-get (ADR-009).
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: garage}}}]
+      ports: [{protocol: TCP, port: 3900}]
+    # Patroni's Kubernetes DCS (ADR-002).
+    - to: [{ipBlock: {cidr: __API_IP__/32}}]
+      ports: [{protocol: TCP, port: __API_PORT__}]
+---
+# Garage: S3 from the Postgres members, the backup and restore-test Jobs, and the restored cluster in pg-restore
+# (make restore). Admin API from the bootstrap Job only. Garage itself needs no egress beyond DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: garage-ingress, namespace: pg-ha}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: garage}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: pg}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: pg-backup}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: pg-restore-test}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: pg-restore}}
+      ports: [{protocol: TCP, port: 3900}]
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: garage-bootstrap}}
+      ports: [{protocol: TCP, port: 3903}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: garage-bootstrap-egress, namespace: pg-ha}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: garage-bootstrap}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: garage}}}]
+      ports: [{protocol: TCP, port: 3903}]
+---
+# Backup Job (and the stanza and check helpers made from its template): pgBackRest TLS to the members, the
+# fingerprint query through pg-rw (5432), and the repository.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: backup-egress, namespace: pg-ha}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: pg-backup}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: pg}}}]
+      ports: [{protocol: TCP, port: 8432}, {protocol: TCP, port: 5432}]
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: garage}}}]
+      ports: [{protocol: TCP, port: 3900}]
+---
+# Restore-test Job: restores from the repository into its own emptyDir; it talks to no member.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: restore-test-egress, namespace: pg-ha}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: pg-restore-test}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: garage}}}]
+      ports: [{protocol: TCP, port: 3900}]
+---
+# Database clients in pg-ha: Postgres only, in pg-ha or in the restored cluster (L4 tests read pg-restore).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: db-client-egress, namespace: pg-ha}
+spec:
+  podSelector: {matchLabels: {pg-ha/db-client: "true"}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector: {matchLabels: {app.kubernetes.io/name: pg}}
+      ports: [{protocol: TCP, port: 5432}]

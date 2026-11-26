@@ -3,7 +3,7 @@
 **Result: PASS**
 
 - **Covers:** R1.1, R1.2, R1.3, R1.7 (bytes and seconds), R2.1, R2.2, R7.4 (placement), ADR-004 sync standby, ADR-005 slot cap
-- **Run:** 2026-11-24T17:03:43Z (UTC), 24 s
+- **Run:** 2026-11-25T17:22:40Z (UTC), 27 s
 - **Reproduce:** `make test-replication`
 - **Versions:** k3s `rancher/k3s:v1.35.10-k3s1`, image `pg-ha-postgres:17.12-patroni4.1.5-pgbackrest2.60.1`
 - **History:** [`L1-replication-history.md`](L1-replication-history.md) (maintained by hand, never written by this test)
@@ -49,21 +49,21 @@
 
 ```console
 $ patroni_cluster | jq -r '.members[] | "\(.name) role=\(.role) state=\(.state) timeline=\(.timeline) lag=\(.lag // "-")"'
-pg-0 role=replica state=streaming timeline=1 lag=0
-pg-1 role=sync_standby state=streaming timeline=1 lag=0
-pg-2 role=leader state=running timeline=1 lag=-
+pg-0 role=replica state=streaming timeline=39 lag=0
+pg-1 role=sync_standby state=streaming timeline=39 lag=0
+pg-2 role=leader state=running timeline=39 lag=-
 ```
 
 ```console
 $ kubectl -n pg-ha get pods -l app.kubernetes.io/name=pg -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,IP:.status.podIP,ROLE:.metadata.labels.role,READY:.status.containerStatuses[0].ready
-POD    NODE                IP          ROLE      READY
-pg-0   k3d-pg-ha-agent-1   10.42.1.7   replica   true
-pg-1   k3d-pg-ha-agent-2   10.42.3.4   replica   true
-pg-2   k3d-pg-ha-agent-0   10.42.2.3   primary   true
+POD    NODE                IP           ROLE      READY
+pg-0   k3d-pg-ha-agent-1   10.42.1.53   replica   true
+pg-1   k3d-pg-ha-agent-0   10.42.4.26   replica   true
+pg-2   k3d-pg-ha-agent-2   10.42.3.28   primary   true
 ```
 
 ```console
-$ cat /tmp/l1-members.481779
+$ cat /tmp/l1-members.1820608
 pg-2: version_num=170012 in_recovery=false checksums=on ssl=on
 pg-0: version_num=170012 in_recovery=true checksums=on ssl=on
 pg-1: version_num=170012 in_recovery=true checksums=on ssl=on
@@ -86,8 +86,8 @@ synchronous_standby_names "pg-1"
 ## Write through pg-rw, read through pg-ro and on each replica
 
 ```console
-$ q pg-rw.pg-ha.svc.cluster.local app "insert into l1_marker(token) values ('l1-20261124T170349Z-25584') returning token, written_at"
-l1-20261124T170349Z-25584 2026-11-24 17:03:49.696244+00
+$ q pg-rw.pg-ha.svc.cluster.local app "insert into l1_marker(token) values ('l1-20261125T172247Z-29791') returning token, written_at"
+l1-20261125T172247Z-29791 2026-11-25 17:22:48.331065+00
 ```
 
 ## Replication lag in bytes and seconds (R1.7)
@@ -96,16 +96,16 @@ Measured on the primary right after a write. `replay_lag` is Postgres's own time
 
 ```console
 $ q pg-rw.pg-ha.svc.cluster.local monitor "select application_name, sync_state, pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) as lag_bytes, coalesce(round(extract(epoch from replay_lag)::numeric, 6)::text, 'null') as lag_seconds from pg_stat_replication order by application_name"
-pg-0 async 0 0.002417
-pg-1 sync 0 0.002207
+pg-0 async 0 0.002720
+pg-1 sync 0 0.002409
 ```
 
 ## Replication slots and the WAL cap (ADR-005)
 
 ```console
 $ q pg-rw.pg-ha.svc.cluster.local monitor "select slot_name, slot_type, active, wal_status, pg_size_pretty(safe_wal_size) as safe_wal_size from pg_replication_slots order by slot_name"
-pg_0 physical t reserved 1029 MB
-pg_1 physical t reserved 1029 MB
+pg_0 physical t reserved 1040 MB
+pg_1 physical t reserved 1040 MB
 ```
 
 ```console
@@ -117,16 +117,16 @@ wal_log_hints on
 
 ## Client endpoints (T:endpoints)
 
-Leader `pg-2` has pod IP `10.42.2.3`. The pg-rw EndpointSlice (mirrored from Patroni's Endpoints) lists `10.42.2.3`. pg-ro lists `10.42.3.4 10.42.1.7 `.
+Leader `pg-2` has pod IP `10.42.3.28`. The pg-rw EndpointSlice (mirrored from Patroni's Endpoints) lists `10.42.3.28`. pg-ro lists `10.42.4.26 10.42.1.53 `.
 
 ```console
 $ q pg-rw.pg-ha.svc.cluster.local app "select 'pg-rw: server=' || host(inet_server_addr()) || ' in_recovery=' || pg_is_in_recovery()"
-pg-rw: server=10.42.2.3 in_recovery=false
+pg-rw: server=10.42.3.28 in_recovery=false
 ```
 
 ```console
 $ q pg-ro.pg-ha.svc.cluster.local app "select 'pg-ro: server=' || host(inet_server_addr()) || ' in_recovery=' || pg_is_in_recovery()"
-pg-ro: server=10.42.1.7 in_recovery=true
+pg-ro: server=10.42.4.26 in_recovery=true
 ```
 
 ```console
@@ -138,20 +138,20 @@ command terminated with exit code 1
 
 ## Replica pod deleted: it rejoins and streams again
 
-Fault: `kubectl delete pod pg-1` (the synchronous standby). Leader before: `pg-2`, timeline 1.
+Fault: `kubectl delete pod pg-1` (the synchronous standby). Leader before: `pg-2`, timeline 39.
 
 ```console
 $ kubectl -n pg-ha delete pod pg-1 --wait=false
 pod "pg-1" deleted from pg-ha namespace
 ```
 
-Time from delete until the replacement pod (new UID) streams again, seen by both Patroni and pg_stat_replication on the primary: **10.3 s**.
+Time from delete until the replacement pod (new UID) streams again, seen by both Patroni and pg_stat_replication on the primary: **10.0 s**.
 
 ```console
 $ patroni_cluster | jq -r '.members[] | "\(.name) role=\(.role) state=\(.state) timeline=\(.timeline) lag=\(.lag // "-")"'
-pg-0 role=sync_standby state=streaming timeline=1 lag=0
-pg-1 role=replica state=streaming timeline=1 lag=0
-pg-2 role=leader state=running timeline=1 lag=-
+pg-0 role=sync_standby state=streaming timeline=39 lag=0
+pg-1 role=replica state=streaming timeline=39 lag=0
+pg-2 role=leader state=running timeline=39 lag=-
 ```
 
 ```console

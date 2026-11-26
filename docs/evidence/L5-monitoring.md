@@ -2,6 +2,8 @@
 
 Generated from the per-part files in [`L5/`](L5/) each time a part runs. Timestamps are UTC. Design and alert table: [`../observability.md`](../observability.md).
 
+Hand-written notes: [`L5-monitoring-history.md`](L5-monitoring-history.md).
+
 | Part | Result | Checks passed | Details |
 |---|---|---:|---|
 | Alert rule unit tests (R10.2) | PASS | 4 of 4 | [`L5/alert-rules.md`](L5/alert-rules.md) |

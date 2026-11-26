@@ -8,11 +8,11 @@ RTO is fault injection to the first commit acknowledged by a new primary, measur
 
 | Mode | Result | RTO |
 |---|---|---|
-| [pod](L2/pod.md) | PASS | min 3.60 s, median 3.78 s, max 5.13 s over 3 runs |
+| [pod](L2/pod.md) | PASS | min 2.72 s, median 2.72 s, max 2.72 s over 1 runs |
 | [node](L2/node.md) | PASS | min 23.22 s, median 23.93 s, max 26.19 s over 3 runs |
 | [storage](L2/storage.md) | PASS | min 2.39 s, median 3.37 s, max 3.69 s over 3 runs |
 | [split-brain](L2/split-brain.md) | PASS | min 20.47 s, median 22.18 s, max 22.20 s over 3 runs |
-| [switchover](L2/switchover.md) | PASS | min 2.08 s, median 2.08 s, max 2.08 s over 1 runs |
+| [switchover](L2/switchover.md) | PASS | min 3.07 s, median 3.07 s, max 3.07 s over 1 runs |
 | [chain](L2/chain.md) | PASS |  |
 | [diverge](L2/diverge.md) | PASS |  |
 | [api-outage](L2/api-outage.md) | PASS |  |
@@ -25,11 +25,9 @@ RTO is fault injection to the first commit acknowledged by a new primary, measur
 
 | Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
-| 1 | pg-1 | pg-0 | 3.78 | 3.24 | 132 | 0 | 1 | restart only | 8.88 | k3d-pg-ha-server-0 | 0 | 2.26 | PASS |
-| 2 | pg-0 | pg-2 | 5.13 | 4.55 | 131 | 0 | 1 | restart only | 10.33 | k3d-pg-ha-server-0 | 0 | 2.48 | PASS |
-| 3 | pg-2 | pg-1 | 3.60 | 3.09 | 132 | 0 | 1 | restart only | 10.01 | k3d-pg-ha-server-0 | 0 | 2.41 | PASS |
+| 1 | pg-2 | pg-0 | 2.72 | 2.70 | 134 | 0 | 1 | restart only | 8.99 | k3d-pg-ha-server-0 | 0 | 2.60 | PASS |
 
-RTO: min 3.60 s, median 3.78 s, max 5.13 s over 3 runs. Target 30 s.
+RTO: min 2.72 s, median 2.72 s, max 2.72 s over 1 runs. Target 30 s.
 
 
 ## node: Result: PASS
@@ -79,15 +77,15 @@ RTO: min 20.47 s, median 22.18 s, max 22.20 s over 3 runs. Target 30 s.
 
 ## switchover: Result: PASS
 
-- **Fault:** `POST /switchover` to the leader's Patroni REST API over `kubectl port-forward` and `curl`, naming the target (default the current sync standby). No exec is used. The API server pod proxy was tried first and refused with HTTP 411, because Patroni requires a Content-Length header that the proxy does not forward. **The REST API is unauthenticated until L6.**
+- **Fault:** `POST /switchover` to the leader's Patroni REST API over `kubectl port-forward` and `curl`, naming the target (default the current sync standby). No exec is used. The API server pod proxy was tried first and refused with HTTP 411, because Patroni requires a Content-Length header that the proxy does not forward. Since L6 the POST carries basic auth (user `patroni`, password from `./secrets`, passed to curl on stdin); unauthenticated state-changing requests are refused (`make test-security`).
 - Details: [`L2/switchover.md`](L2/switchover.md)
 
 
 | Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
-| 1 | pg-1 | pg-0 | 2.08 | 2.15 | 95 | 0 | 1 | restart only | 8.90 | k3d-pg-ha-server-0 | 0 | 1.84 | PASS |
+| 1 | pg-0 | pg-1 | 3.07 | 3.19 | 92 | 0 | 1 | restart only | 8.09 | k3d-pg-ha-server-0 | 0 | 1.73 | PASS |
 
-RTO: min 2.08 s, median 2.08 s, max 2.08 s over 1 runs. Target 30 s.
+RTO: min 3.07 s, median 3.07 s, max 3.07 s over 1 runs. Target 30 s.
 
 
 ## chain: Result: PASS
