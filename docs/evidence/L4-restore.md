@@ -6,7 +6,7 @@ Hand-written notes: [`L4-restore-history.md`](L4-restore-history.md).
 
 | Part | Result | Checks passed | Details |
 |---|---|---:|---|
-| Full restore into an empty namespace (R5.1) | PASS | 10 of 10 | [`L4/restore-full.md`](L4/restore-full.md) |
+| Full restore into an empty namespace (R5.1) | FAIL | 9 of 10 | [`L4/restore-full.md`](L4/restore-full.md) |
 | Point-in-time recovery (R5.3) | PASS | 7 of 7 | [`L4/pitr.md`](L4/pitr.md) |
 | Restore test Job, on demand (R4.5, R5.4) | PASS | 6 of 6 | [`L4/restore-test.md`](L4/restore-test.md) |
 | Restore test Job, scheduled (R4.5) | PASS | 4 of 4 | [`L4/restore-scheduled.md`](L4/restore-scheduled.md) |
@@ -17,16 +17,16 @@ Hand-written notes: [`L4-restore-history.md`](L4-restore-history.md).
 
 | Check | Result |
 |---|---|
-| Timeline history files are present for every timeline switch up to 37 (found 36, need 36) | PASS |
+| Timeline history files are present for every timeline switch up to 23 (found 2, need 22) | **FAIL** |
 | make restore completed: 1 leader, 2 streaming replicas, 1 sync standby in pg-restore | PASS |
 | Row counts and checksums of the seeded tables match the source | PASS |
 | The marker row written just before the restore is present | PASS |
-| Restored cluster is on a new timeline above the source's (38 > 37) | PASS |
+| Restored cluster is on a new timeline above the source's (24 > 23) | PASS |
 | archive_mode is off on the restored primary | PASS |
 | The restored primary archived nothing | PASS |
-| The source archive has no WAL on the restored timeline (00000026) | PASS |
+| The source archive has no WAL on the restored timeline (00000018) | PASS |
 | Passwords from this namespace's Secret work on the restored cluster (post_bootstrap reset) | PASS |
-| make restore-clean deleted only the pg-restore namespace and its PVCs (12.64 s) | PASS |
+| make restore-clean deleted only the pg-restore namespace and its PVCs (10.71 s) | PASS |
 
 ## Point-in-time recovery (R5.3)
 
@@ -36,11 +36,11 @@ Hand-written notes: [`L4-restore-history.md`](L4-restore-history.md).
 |---|---|
 | The segment holding A was archived after T (within archive_timeout + margin) | PASS |
 | The segment holding B was archived too, so recovery must stop at T rather than run out of WAL | PASS |
-| make restore TARGET_TIME='2026-11-25 21:44:25+06' completed: 1 leader, 2 streaming replicas, 1 sync standby | PASS |
+| make restore TARGET_TIME='2026-11-26 21:55:28+06' completed: 1 leader, 2 streaming replicas, 1 sync standby | PASS |
 | Marker A (before T) is present | PASS |
 | Marker B (after T) is absent | PASS |
 | archive_mode is off on the restored primary | PASS |
-| make restore-clean removed pg-restore (10.34 s) | PASS |
+| make restore-clean removed pg-restore (10.98 s) | PASS |
 
 ## Restore test Job, on demand (R4.5, R5.4)
 

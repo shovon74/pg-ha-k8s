@@ -3,7 +3,7 @@
 **Result: PASS**
 
 - **What:** Three full backups from the CronJob template with a temporary `PGBACKREST_REPO1_RETENTION_FULL=2` on those Jobs only, proving the oldest fulls and their WAL are expired, then a normal run with repo.conf's `repo1-retention-full=7` keeping every full.
-- **Run:** 2026-11-25T07:26:48Z (UTC), 493 s
+- **Run:** 2026-11-26T15:40:48Z (UTC), 464 s
 - **Reproduce:** `make test-retention`
 - **Versions:** k3s `rancher/k3s:v1.35.10-k3s1`, image `pg-ha-postgres:17.12-patroni4.1.5-pgbackrest2.60.1`, Garage `dxflrs/garage:v2.5.0`
 - **History:** [`L3-backup-history.md`](../L3-backup-history.md) (maintained by hand)
@@ -12,75 +12,73 @@
 
 | Check | Result |
 |---|---|
-| Backup 1 (20261125-072655F) completed with verify status ok | PASS |
-| Backup 2 (20261125-073042F) completed with verify status ok | PASS |
-| Backup 3 (20261125-073333F) completed with verify status ok | PASS |
+| Backup 1 (20261126-154057F) completed with verify status ok | PASS |
+| Backup 2 (20261126-154350F) completed with verify status ok | PASS |
+| Backup 3 (20261126-154644F) completed with verify status ok | PASS |
 | Exactly the 2 newest fulls remain | PASS |
-| The oldest backup from before the test (20261125-071559F) and backup 1 (20261125-072655F) were expired | PASS |
+| The oldest backup from before the test (20261126-153747F) and backup 1 (20261126-154057F) were expired | PASS |
 | WAL older than the oldest kept backup was expired with it (archive min = its start WAL) | PASS |
-| Archive min moved past the expired backup's start WAL (0000001C000000000000001D) | PASS |
+| Archive min moved past the expired backup's start WAL (00000016000000000000004C) | PASS |
 | repo.conf still says repo1-retention-full=7 and the CronJob sets no retention override | PASS |
 | A normal run (retention 7) keeps all 3 fulls | PASS |
 
 ## Before
 
 ```console
-$ jq -r '.[0].backup[] | .label + "  wal " + .archive.start + ".." + .archive.stop' <<<'[{"archive":[{"database":{"id":1,"repo-key":1},"id":"17-1","max":"0000001C000000000000001B","min":"000000010000000000000004"}],"backup":[{"archive":{"start":"0000001C000000000000000F","stop":"0000001C000000000000000F"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188965530,"repository":{"delta":10943536,"size":10943536},"size":188965530},"label":"20261125-071559F","lsn":{"start":"0/F000028","stop":"0/F000158"},"prior":null,"reference":null,"timestamp":{"start":1795590959,"stop":1795590974},"type":"full"},{"archive":{"start":"0000001C0000000000000012","stop":"0000001C0000000000000012"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188965532,"repository":{"delta":10943536,"size":10943536},"size":188965532},"label":"20261125-072002F","lsn":{"start":"0/12000028","stop":"0/12000158"},"prior":null,"reference":null,"timestamp":{"start":1795591202,"stop":1795591231},"type":"full"},{"archive":{"start":"0000001C0000000000000016","stop":"0000001C0000000000000016"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188965532,"repository":{"delta":10943536,"size":10943536},"size":188965532},"label":"20261125-072328F","lsn":{"start":"0/16000028","stop":"0/16000120"},"prior":null,"reference":null,"timestamp":{"start":1795591408,"stop":1795591424},"type":"full"},{"archive":{"start":"0000001C000000000000001B","stop":"0000001C000000000000001B"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188973724,"repository":{"delta":10944048,"size":10944048},"size":188973724},"label":"20261125-072600F","lsn":{"start":"0/1B000028","stop":"0/1B000158"},"prior":null,"reference":null,"timestamp":{"start":1795591560,"stop":1795591583},"type":"full"}],"cipher":"aes-256-cbc","db":[{"id":1,"repo-key":1,"system-id":7711783809198247968,"version":"17"}],"name":"main","repo":[{"cipher":"aes-256-cbc","key":1,"status":{"code":0,"message":"ok"}}],"status":{"code":0,"lock":{"backup":{"held":false},"restore":{"held":false}},"message":"ok"}}]'; echo "archive min: 000000010000000000000004"
-20261125-071559F  wal 0000001C000000000000000F..0000001C000000000000000F
-20261125-072002F  wal 0000001C0000000000000012..0000001C0000000000000012
-20261125-072328F  wal 0000001C0000000000000016..0000001C0000000000000016
-20261125-072600F  wal 0000001C000000000000001B..0000001C000000000000001B
-archive min: 000000010000000000000004
+$ jq -r '.[0].backup[] | .label + "  wal " + .archive.start + ".." + .archive.stop' <<<'[{"archive":[{"database":{"id":1,"repo-key":1},"id":"17-1","max":"00000016000000000000004A","min":"000000010000000000000001"}],"backup":[{"annotation":{"rows.pgbench_accounts":"1000000","rows.pgbench_branches":"10","rows.pgbench_tellers":"100","seeded":"yes","sum.pgbench_accounts":"1637876347759","sum.pgbench_branches":"3530232442","sum.pgbench_tellers":"9319411032"},"archive":{"start":"000000160000000000000046","stop":"000000160000000000000046"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188826677,"repository":{"delta":10932496,"size":10932496},"size":188826677},"label":"20261126-153747F","lsn":{"start":"0/46000028","stop":"0/46000158"},"prior":null,"reference":null,"timestamp":{"start":1795707467,"stop":1795707481},"type":"full"},{"annotation":{"rows.pgbench_accounts":"1000000","rows.pgbench_branches":"10","rows.pgbench_tellers":"100","seeded":"yes","sum.pgbench_accounts":"1637876347759","sum.pgbench_branches":"3530232442","sum.pgbench_tellers":"9319411032"},"archive":{"start":"000000160000000000000049","stop":"000000160000000000000049"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188826677,"repository":{"delta":10932480,"size":10932480},"size":188826677},"label":"20261126-154002F","lsn":{"start":"0/49000028","stop":"0/49000158"},"prior":null,"reference":null,"timestamp":{"start":1795707602,"stop":1795707617},"type":"full"}],"cipher":"aes-256-cbc","db":[{"id":1,"repo-key":1,"system-id":7712491660157001760,"version":"17"}],"name":"main","repo":[{"cipher":"aes-256-cbc","key":1,"status":{"code":0,"message":"ok"}}],"status":{"code":0,"lock":{"backup":{"held":false},"restore":{"held":false}},"message":"ok"}}]'; echo "archive min: 000000010000000000000001"
+20261126-153747F  wal 000000160000000000000046..000000160000000000000046
+20261126-154002F  wal 000000160000000000000049..000000160000000000000049
+archive min: 000000010000000000000001
 ```
 
 ## Three backups with a temporary retention of 2 fulls
 
 ```console
-$ grep -E 'new backup label|expire|remove|VERIFY_OK|VERIFY_FAILED' /tmp/tmp.jwgTAoCVWS.job | grep -vE 'command (begin|end)' | sed -E 's/^[0-9-]+ [0-9:.]+ +P[0-9]+ +//'
-INFO: new backup label = 20261125-072655F
-2026-11-25T07:28:32Z expire (repo1-retention-full from repo.conf, or PGBACKREST_REPO1_RETENTION_FULL for a test)
+$ grep -E 'new backup label|expire|remove|VERIFY_OK|VERIFY_FAILED' /tmp/tmp.I205Znkd0a.job | grep -vE 'command (begin|end)' | sed -E 's/^[0-9-]+ [0-9:.]+ +P[0-9]+ +//'
+INFO: new backup label = 20261126-154057F
+2026-11-26T15:41:41Z expire (repo1-retention-full from repo.conf, or PGBACKREST_REPO1_RETENTION_FULL for a test)
 INFO: repo1: 17-1 no archive to remove
-2026-11-25T07:28:35Z VERIFY_OK
+2026-11-26T15:41:43Z VERIFY_OK
 ```
 
 ```console
-$ grep -E 'new backup label|expire|remove|VERIFY_OK|VERIFY_FAILED' /tmp/tmp.jwgTAoCVWS.job | grep -vE 'command (begin|end)' | sed -E 's/^[0-9-]+ [0-9:.]+ +P[0-9]+ +//'
-INFO: new backup label = 20261125-073042F
-2026-11-25T07:31:26Z expire (repo1-retention-full from repo.conf, or PGBACKREST_REPO1_RETENTION_FULL for a test)
+$ grep -E 'new backup label|expire|remove|VERIFY_OK|VERIFY_FAILED' /tmp/tmp.I205Znkd0a.job | grep -vE 'command (begin|end)' | sed -E 's/^[0-9-]+ [0-9:.]+ +P[0-9]+ +//'
+INFO: new backup label = 20261126-154350F
+2026-11-26T15:44:33Z expire (repo1-retention-full from repo.conf, or PGBACKREST_REPO1_RETENTION_FULL for a test)
 INFO: repo1: 17-1 no archive to remove
-2026-11-25T07:31:29Z VERIFY_OK
+2026-11-26T15:44:36Z VERIFY_OK
 ```
 
 ```console
-$ grep -E 'new backup label|expire|remove|VERIFY_OK|VERIFY_FAILED' /tmp/tmp.jwgTAoCVWS.job | grep -vE 'command (begin|end)' | sed -E 's/^[0-9-]+ [0-9:.]+ +P[0-9]+ +//'
-INFO: new backup label = 20261125-073333F
-2026-11-25T07:34:18Z expire (repo1-retention-full from repo.conf, or PGBACKREST_REPO1_RETENTION_FULL for a test)
+$ grep -E 'new backup label|expire|remove|VERIFY_OK|VERIFY_FAILED' /tmp/tmp.I205Znkd0a.job | grep -vE 'command (begin|end)' | sed -E 's/^[0-9-]+ [0-9:.]+ +P[0-9]+ +//'
+INFO: new backup label = 20261126-154644F
+2026-11-26T15:47:27Z expire (repo1-retention-full from repo.conf, or PGBACKREST_REPO1_RETENTION_FULL for a test)
 INFO: repo1: 17-1 no archive to remove
-2026-11-25T07:34:20Z VERIFY_OK
+2026-11-26T15:47:33Z VERIFY_OK
 ```
 
 ## After
 
 ```console
-$ jq -r '.[0].backup[] | .label + "  wal " + .archive.start + ".." + .archive.stop' <<<'[{"archive":[{"database":{"id":1,"repo-key":1},"id":"17-1","max":"0000001C0000000000000021","min":"0000001C000000000000001F"}],"backup":[{"archive":{"start":"0000001C000000000000001F","stop":"0000001C000000000000001F"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188973724,"repository":{"delta":10944048,"size":10944048},"size":188973724},"label":"20261125-073042F","lsn":{"start":"0/1F000028","stop":"0/1F000158"},"prior":null,"reference":null,"timestamp":{"start":1795591842,"stop":1795591858},"type":"full"},{"archive":{"start":"0000001C0000000000000021","stop":"0000001C0000000000000021"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188973724,"repository":{"delta":10944048,"size":10944048},"size":188973724},"label":"20261125-073333F","lsn":{"start":"0/21000028","stop":"0/21000158"},"prior":null,"reference":null,"timestamp":{"start":1795592013,"stop":1795592030},"type":"full"}],"cipher":"aes-256-cbc","db":[{"id":1,"repo-key":1,"system-id":7711783809198247968,"version":"17"}],"name":"main","repo":[{"cipher":"aes-256-cbc","key":1,"status":{"code":0,"message":"ok"}}],"status":{"code":0,"lock":{"backup":{"held":false},"restore":{"held":false}},"message":"ok"}}]'; echo "archive min: 0000001C000000000000001F"
-20261125-073042F  wal 0000001C000000000000001F..0000001C000000000000001F
-20261125-073333F  wal 0000001C0000000000000021..0000001C0000000000000021
-archive min: 0000001C000000000000001F
+$ jq -r '.[0].backup[] | .label + "  wal " + .archive.start + ".." + .archive.stop' <<<'[{"archive":[{"database":{"id":1,"repo-key":1},"id":"17-1","max":"000000160000000000000050","min":"00000016000000000000004E"}],"backup":[{"annotation":{"rows.pgbench_accounts":"1000000","rows.pgbench_branches":"10","rows.pgbench_tellers":"100","seeded":"yes","sum.pgbench_accounts":"1637876347759","sum.pgbench_branches":"3530232442","sum.pgbench_tellers":"9319411032"},"archive":{"start":"00000016000000000000004E","stop":"00000016000000000000004E"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188826677,"repository":{"delta":10932480,"size":10932480},"size":188826677},"label":"20261126-154350F","lsn":{"start":"0/4E000028","stop":"0/4E000158"},"prior":null,"reference":null,"timestamp":{"start":1795707830,"stop":1795707847},"type":"full"},{"annotation":{"rows.pgbench_accounts":"1000000","rows.pgbench_branches":"10","rows.pgbench_tellers":"100","seeded":"yes","sum.pgbench_accounts":"1637876347759","sum.pgbench_branches":"3530232442","sum.pgbench_tellers":"9319411032"},"archive":{"start":"000000160000000000000050","stop":"000000160000000000000050"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188826677,"repository":{"delta":10932480,"size":10932480},"size":188826677},"label":"20261126-154644F","lsn":{"start":"0/50000028","stop":"0/50000158"},"prior":null,"reference":null,"timestamp":{"start":1795708004,"stop":1795708020},"type":"full"}],"cipher":"aes-256-cbc","db":[{"id":1,"repo-key":1,"system-id":7712491660157001760,"version":"17"}],"name":"main","repo":[{"cipher":"aes-256-cbc","key":1,"status":{"code":0,"message":"ok"}}],"status":{"code":0,"lock":{"backup":{"held":false},"restore":{"held":false}},"message":"ok"}}]'; echo "archive min: 00000016000000000000004E"
+20261126-154350F  wal 00000016000000000000004E..00000016000000000000004E
+20261126-154644F  wal 000000160000000000000050..000000160000000000000050
+archive min: 00000016000000000000004E
 ```
 
-Labels before: `20261125-071559F 20261125-072002F 20261125-072328F 20261125-072600F `. New: `20261125-072655F 20261125-073042F 20261125-073333F`. Left after expire: `20261125-073042F 20261125-073333F `. Archive min before `000000010000000000000004`, after `0000001C000000000000001F`. Start WAL of the expired backup 20261125-072655F: `0000001C000000000000001D`, of the oldest kept 20261125-073042F: `0000001C000000000000001F`.
+Labels before: `20261126-153747F 20261126-154002F `. New: `20261126-154057F 20261126-154350F 20261126-154644F`. Left after expire: `20261126-154350F 20261126-154644F `. Archive min before `000000010000000000000001`, after `00000016000000000000004E`. Start WAL of the expired backup 20261126-154057F: `00000016000000000000004C`, of the oldest kept 20261126-154350F: `00000016000000000000004E`.
 
 ## Real setting in force again
 
 ```console
 $ grep -h retention deploy/pg/pgbackrest/*.conf; kubectl -n pg-ha get cronjob pg-backup -o json | jq -c '[.spec.jobTemplate.spec.template.spec.containers[0].env[] | .name]'
 repo1-retention-full=7
-["HOME"]
+["HOME","APP_RO_PW"]
 ```
 
 ```console
-$ jq -r '.[0].backup[] | .label' <<<'[{"archive":[{"database":{"id":1,"repo-key":1},"id":"17-1","max":"0000001C0000000000000023","min":"0000001C000000000000001F"}],"backup":[{"archive":{"start":"0000001C000000000000001F","stop":"0000001C000000000000001F"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188973724,"repository":{"delta":10944048,"size":10944048},"size":188973724},"label":"20261125-073042F","lsn":{"start":"0/1F000028","stop":"0/1F000158"},"prior":null,"reference":null,"timestamp":{"start":1795591842,"stop":1795591858},"type":"full"},{"archive":{"start":"0000001C0000000000000021","stop":"0000001C0000000000000021"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188973724,"repository":{"delta":10944048,"size":10944048},"size":188973724},"label":"20261125-073333F","lsn":{"start":"0/21000028","stop":"0/21000158"},"prior":null,"reference":null,"timestamp":{"start":1795592013,"stop":1795592030},"type":"full"},{"archive":{"start":"0000001C0000000000000023","stop":"0000001C0000000000000023"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188973724,"repository":{"delta":10944048,"size":10944048},"size":188973724},"label":"20261125-073430F","lsn":{"start":"0/23000028","stop":"0/23000158"},"prior":null,"reference":null,"timestamp":{"start":1795592070,"stop":1795592088},"type":"full"}],"cipher":"aes-256-cbc","db":[{"id":1,"repo-key":1,"system-id":7711783809198247968,"version":"17"}],"name":"main","repo":[{"cipher":"aes-256-cbc","key":1,"status":{"code":0,"message":"ok"}}],"status":{"code":0,"lock":{"backup":{"held":false},"restore":{"held":false}},"message":"ok"}}]'
-20261125-073042F
-20261125-073333F
-20261125-073430F
+$ jq -r '.[0].backup[] | .label' <<<'[{"archive":[{"database":{"id":1,"repo-key":1},"id":"17-1","max":"000000160000000000000052","min":"00000016000000000000004E"}],"backup":[{"annotation":{"rows.pgbench_accounts":"1000000","rows.pgbench_branches":"10","rows.pgbench_tellers":"100","seeded":"yes","sum.pgbench_accounts":"1637876347759","sum.pgbench_branches":"3530232442","sum.pgbench_tellers":"9319411032"},"archive":{"start":"00000016000000000000004E","stop":"00000016000000000000004E"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188826677,"repository":{"delta":10932480,"size":10932480},"size":188826677},"label":"20261126-154350F","lsn":{"start":"0/4E000028","stop":"0/4E000158"},"prior":null,"reference":null,"timestamp":{"start":1795707830,"stop":1795707847},"type":"full"},{"annotation":{"rows.pgbench_accounts":"1000000","rows.pgbench_branches":"10","rows.pgbench_tellers":"100","seeded":"yes","sum.pgbench_accounts":"1637876347759","sum.pgbench_branches":"3530232442","sum.pgbench_tellers":"9319411032"},"archive":{"start":"000000160000000000000050","stop":"000000160000000000000050"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188826677,"repository":{"delta":10932480,"size":10932480},"size":188826677},"label":"20261126-154644F","lsn":{"start":"0/50000028","stop":"0/50000158"},"prior":null,"reference":null,"timestamp":{"start":1795708004,"stop":1795708020},"type":"full"},{"annotation":{"rows.pgbench_accounts":"1000000","rows.pgbench_branches":"10","rows.pgbench_tellers":"100","seeded":"yes","sum.pgbench_accounts":"1637876347759","sum.pgbench_branches":"3530232442","sum.pgbench_tellers":"9319411032"},"archive":{"start":"000000160000000000000052","stop":"000000160000000000000052"},"backrest":{"format":5,"version":"2.60.1"},"database":{"id":1,"repo-key":1},"error":false,"info":{"delta":188826676,"repository":{"delta":10932480,"size":10932480},"size":188826676},"label":"20261126-154755F","lsn":{"start":"0/52000028","stop":"0/52000158"},"prior":null,"reference":null,"timestamp":{"start":1795708075,"stop":1795708094},"type":"full"}],"cipher":"aes-256-cbc","db":[{"id":1,"repo-key":1,"system-id":7712491660157001760,"version":"17"}],"name":"main","repo":[{"cipher":"aes-256-cbc","key":1,"status":{"code":0,"message":"ok"}}],"status":{"code":0,"lock":{"backup":{"held":false},"restore":{"held":false}},"message":"ok"}}]'
+20261126-154350F
+20261126-154644F
+20261126-154755F
 ```

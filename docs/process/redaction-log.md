@@ -24,3 +24,20 @@ Occurrence counts were taken on 2026-11-23 at about 15:10 UTC. Session `e73dfe31
 ## Automatic redaction
 
 The spike harness (`scripts/spikes/lib.sh`) replaces any value from `./secrets/credentials` with `[REDACTED:<credential-name>]` before writing evidence files. These replacements are made at generation time, so no unredacted original exists in the repository to log individually.
+
+## Session-log export (L8)
+
+`scripts/export-logs.sh` copies the Claude Code session logs into `ai-logs/raw/` and applies these rules. Each replacement is a visible placeholder. Counts per rule and file go to `ai-logs/redactions.tsv` (counts only, never values).
+
+| Rule | Matches | Placeholder |
+|---|---|---|
+| R-001, R-002 | Regex `GK[0-9a-f]{24}` (rotated Garage S3 access key ID) | `[REDACTED:garage-s3-access-key-id]` |
+| GCP project ID | The VM's project ID (gcloud config or GCE metadata, read locally), and `projects/<id>` paths | `[REDACTED-GCP-PROJECT]` |
+| GCP project number | The VM's numeric project ID | `[REDACTED-GCP-PROJECT-NUMBER]` |
+| External IP | The VM's external IP, and any other public IPv4 address (private, loopback, link-local and reserved ranges are kept) | `[REDACTED-EXTERNAL-IP]` |
+| Email | Any email address | `[REDACTED-EMAIL]` |
+| Home path | The user's home directory path | `[REDACTED-HOME]` |
+| Hostname | The VM's hostname (a cloud instance name) | `[REDACTED-HOST]` |
+| Username | The host username | `[REDACTED-USER]` |
+
+After redaction the script checks every value in `./secrets` (credentials and private-key lines) against the output, without printing any value, and fails on a match. When it has run, R-001 and R-002 above change from **Pending** to **Applied**, with the counts from `redactions.tsv`.

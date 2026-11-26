@@ -3,7 +3,7 @@
 **Result: PASS**
 
 - **What:** `kubectl rollout restart deploy/garage` while the probe writes every 500 ms and about 5 MB of WAL is generated every 2 s. Measures when archiving succeeds again and when the .ready backlog drains, with no manual action. The bound is 120 s after Garage is Ready.
-- **Run:** 2026-11-25T07:49:59Z (UTC), 107 s
+- **Run:** 2026-11-26T15:52:13Z (UTC), 48 s
 - **Reproduce:** `make test-garage-restart`
 - **Versions:** k3s `rancher/k3s:v1.35.10-k3s1`, image `pg-ha-postgres:17.12-patroni4.1.5-pgbackrest2.60.1`, Garage `dxflrs/garage:v2.5.0`
 - **History:** [`L3-backup-history.md`](../L3-backup-history.md) (maintained by hand)
@@ -19,47 +19,32 @@
 
 ## Setup
 
-Probe run `garage-restart-1795593000` writing through pg-rw every 500 ms. WAL generator: about 5 MB every 2 s into `l3_walgen`. Leader `pg-1`. Before the restart: archived=27 failed=0 ready backlog=0.
+Probe run `garage-restart-1795708335` writing through pg-rw every 500 ms. WAL generator: about 5 MB every 2 s into `l3_walgen`. Leader `pg-2`. Before the restart: archived=31 failed=0 ready backlog=0.
 
 ## Garage restart
 
-Garage pod `garage-78b588844b-bkn9x` replaced by `garage-6687844f64-ld7gj`. Restart issued at 07:50:24.770 UTC, new pod Ready at +4.19 s. Last successful archive before the restart at -4.25 s. First archive after Garage Ready at +64.06 s (59.87 s after Ready). Backlog drained at +67.13 s. Archive failures counted: 1. Largest .ready backlog: 8 segments. Probe: largest gap between acknowledged writes in the window 1.14 s, 0 failed attempts.
+Garage pod `garage-78b588844b-769mb` replaced by `garage-c8cd6c48d-lcdbs`. Restart issued at 15:52:40.724 UTC, new pod Ready at +4.03 s. Last successful archive before the restart at -4.53 s. First archive after Garage Ready at +6.18 s (2.14 s after Ready). Backlog drained at +7.05 s. Archive failures counted: 0. Largest .ready backlog: 1 segments. Probe: largest gap between acknowledged writes in the window 0.90 s, 0 failed attempts.
 
 ```console
-$ awk -v t=1795593024.770784355 '$1 >= t - 6' /tmp/tmp.9Hq0wlQo5c/arch.txt | awk '{printf "%s archived=%s failed=%s last=%s ready=%s\n", strftime("%H:%M:%S", $1, 1), $2, $3, $4, $7}' | awk 'NR % 3 == 1' | head -50
-07:50:19 archived=26 failed=0 last=000000230000000000000039 ready=0
-07:50:23 archived=27 failed=0 last=00000023000000000000003A ready=0
-07:50:27 archived=27 failed=0 last=00000023000000000000003A ready=0
-07:50:31 archived=27 failed=0 last=00000023000000000000003A ready=1
-07:50:35 archived=27 failed=0 last=00000023000000000000003A ready=1
-07:50:39 archived=27 failed=0 last=00000023000000000000003A ready=2
-07:50:43 archived=27 failed=0 last=00000023000000000000003A ready=2
-07:50:47 archived=27 failed=0 last=00000023000000000000003A ready=3
-07:50:51 archived=27 failed=0 last=00000023000000000000003A ready=3
-07:50:55 archived=27 failed=0 last=00000023000000000000003A ready=4
-07:50:59 archived=27 failed=0 last=00000023000000000000003A ready=4
-07:51:03 archived=27 failed=0 last=00000023000000000000003A ready=5
-07:51:07 archived=27 failed=0 last=00000023000000000000003A ready=5
-07:51:11 archived=27 failed=0 last=00000023000000000000003A ready=6
-07:51:15 archived=27 failed=0 last=00000023000000000000003A ready=6
-07:51:19 archived=27 failed=0 last=00000023000000000000003A ready=7
-07:51:23 archived=27 failed=0 last=00000023000000000000003A ready=7
-07:51:27 archived=27 failed=0 last=00000023000000000000003A ready=8
-07:51:31 archived=35 failed=1 last=000000230000000000000042 ready=0
-07:51:35 archived=36 failed=1 last=000000230000000000000043 ready=0
+$ awk -v t=1795708360.724289080 '$1 >= t - 6' /tmp/tmp.zTrobxxPWL/arch.txt | awk '{printf "%s archived=%s failed=%s last=%s ready=%s\n", strftime("%H:%M:%S", $1, 1), $2, $3, $4, $7}' | awk 'NR % 3 == 1' | head -50
+15:52:35 archived=30 failed=0 last=000000170000000000000059 ready=0
+15:52:39 archived=31 failed=0 last=00000017000000000000005A ready=0
+15:52:43 archived=31 failed=0 last=00000017000000000000005A ready=0
+15:52:47 archived=32 failed=0 last=00000017000000000000005B ready=0
+15:52:51 archived=32 failed=0 last=00000017000000000000005B ready=1
 ```
 
 | Garage Ready after restart (s) | First archive after Ready (s) | Backlog drained after restart (s) | Archive failures | Max .ready backlog | Max write gap (s) | Probe errors |
 |---:|---:|---:|---:|---:|---:|---:|
-| 4.19 | 59.87 | 67.13 | 1 | 8 | 1.14 | 0 |
+| 4.03 | 2.14 | 7.05 | 0 | 1 | 0.90 | 0 |
 
 ```console
 $ JOB_WAIT=300 scripts/pgbr-job.sh pg-check-after-garage 'pgbackrest --stanza=main --log-level-console=info check && echo CHECK_OK' | grep -vE 'command begin'
-2026-11-25 07:51:40.311 P00   INFO: check repo1 (standby)
-2026-11-25 07:51:40.323 P00   INFO: switch wal not performed because this is a standby
-2026-11-25 07:51:40.324 P00   INFO: check repo1 configuration (primary)
-2026-11-25 07:51:40.357 P00   INFO: check repo1 archive for WAL (primary)
-2026-11-25 07:51:41.187 P00   INFO: WAL segment 000000230000000000000044 successfully archived to '/pg-ha/archive/main/17-1/0000002300000000/000000230000000000000044-78c1c98a71f12efc9ec408335a80e9084c081530.zst' on repo1
-2026-11-25 07:51:41.189 P00   INFO: check command end: completed successfully (1078ms)
+2026-11-26 15:52:56.578 P00   INFO: check repo1 (standby)
+2026-11-26 15:52:56.588 P00   INFO: switch wal not performed because this is a standby
+2026-11-26 15:52:56.588 P00   INFO: check repo1 configuration (primary)
+2026-11-26 15:52:56.638 P00   INFO: check repo1 archive for WAL (primary)
+2026-11-26 15:52:57.080 P00   INFO: WAL segment 00000017000000000000005D successfully archived to '/pg-ha/archive/main/17-1/0000001700000000/00000017000000000000005D-fd001f82d931c3d7b9da684a3812dcfd665ca08c.zst' on repo1
+2026-11-26 15:52:57.082 P00   INFO: check command end: completed successfully (1721ms)
 CHECK_OK
 ```

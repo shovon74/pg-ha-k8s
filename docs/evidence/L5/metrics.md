@@ -3,7 +3,7 @@
 **Result: PASS**
 
 - **What:** Every scrape target up, the key series for each alert present, all rules loaded and healthy, nothing firing on the healthy cluster, nothing scraped from pg-restore. Then induced lag (R1.7): the async standby's stream is throttled with iptables on the primary's node while a writer fills WAL. Lag in bytes and seconds must rise past the alert thresholds, ReplicationLagHigh must fire in Alertmanager (R10.3), and after the throttle lag must return to near zero and the alert resolve. Then RAM and disk use with monitoring running.
-- **Run:** 2026-11-26T14:15:42Z (UTC), 153 s
+- **Run:** 2026-11-26T16:05:50Z (UTC), 154 s
 - **Reproduce:** `make test-metrics`
 - **Versions:** Prometheus `prom/prometheus:v3.16.0`, Alertmanager `prom/alertmanager:v0.34.2`, postgres_exporter `quay.io/prometheuscommunity/postgres-exporter:v0.20.1`, image `pg-ha-postgres:17.12-patroni4.1.5-pgbackrest2.60.1`
 - **History:** [`L5-monitoring-history.md`](../L5-monitoring-history.md) (maintained by hand)
@@ -31,7 +31,7 @@
 | Archiver failure counter: 3 series (need 3) | PASS |
 | Archive backlog (.ready): 3 series (need 3) | PASS |
 | Backup and restore-test CronJobs: 2 series (need 2) | PASS |
-| Backup or restore-test Job status: 7 series (need 1) | PASS |
+| Backup or restore-test Job status: 2 series (need 1) | PASS |
 | Expected member count: 1 series (need 1) | PASS |
 | CoreDNS availability: 1 series (need 1) | PASS |
 | Root filesystem free space per node: 4 series (need 4) | PASS |
@@ -39,8 +39,8 @@
 | 19 alerting rules loaded | PASS |
 | Every rule evaluates without error | PASS |
 | No warning or critical alert firing before the fault | PASS |
-| Lag in bytes rose above the 16 MiB threshold (peak 218599592) | PASS |
-| Lag in seconds rose above the 30 s threshold (peak 124.603227) | PASS |
+| Lag in bytes rose above the 16 MiB threshold (peak 218957800) | PASS |
+| Lag in seconds rose above the 30 s threshold (peak 120.599388) | PASS |
 | The standby stayed connected during the throttle (state streaming) | PASS |
 | ReplicationLagHigh fired in Alertmanager | PASS |
 | Lag returned to near zero (< 1 MiB, < 1 s) within 180 s of removing the throttle | PASS |
@@ -49,7 +49,7 @@
 ## Scrape targets (R10.1)
 
 ```console
-$ jq -r '.data.activeTargets[] | "\(.labels.job) \(.labels.instance) \(.health)"' /tmp/tmp.OdNJ0SABDw | sort
+$ jq -r '.data.activeTargets[] | "\(.labels.job) \(.labels.instance) \(.health)"' /tmp/tmp.Uu9R3GPE4u | sort
 alertmanager alertmanager.monitoring.svc:9093 up
 kube-state-metrics kube-state-metrics.monitoring.svc:8080 up
 kube-state-metrics-self kube-state-metrics.monitoring.svc:8081 up
@@ -73,9 +73,9 @@ One query per signal that an alert or the lag measurement depends on. Values at 
 `patroni_primary{namespace="pg-ha"}`
 
 ```
+instance=pg-1,job=patroni,name=pg-1,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-1,scope=pg-rw 0
 instance=pg-2,job=patroni,name=pg-2,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2,scope=pg-rw 1
-instance=pg-1,job=patroni,name=pg-1,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-1,scope=pg-rw 0
-instance=pg-0,job=patroni,name=pg-0,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-0,scope=pg-rw 0
+instance=pg-0,job=patroni,name=pg-0,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-0,scope=pg-rw 0
 ```
 
 `sum(patroni_primary{namespace="pg-ha"}) == 1`
@@ -93,17 +93,17 @@ instance=pg-0,job=patroni,name=pg-0,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=p
 `pg_up{namespace="pg-ha"} == 1`
 
 ```
-instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-0 1
-instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-1 1
 instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2 1
+instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-0 1
+instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-1 1
 ```
 
 `patroni_postgres_timeline{namespace="pg-ha"}`
 
 ```
-instance=pg-2,job=patroni,name=pg-2,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2,scope=pg-rw 43
-instance=pg-1,job=patroni,name=pg-1,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-1,scope=pg-rw 43
-instance=pg-0,job=patroni,name=pg-0,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-0,scope=pg-rw 43
+instance=pg-1,job=patroni,name=pg-1,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-1,scope=pg-rw 23
+instance=pg-2,job=patroni,name=pg-2,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2,scope=pg-rw 23
+instance=pg-0,job=patroni,name=pg-0,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-0,scope=pg-rw 23
 ```
 
 `pg_ha_replication_lag_bytes{namespace="pg-ha"}`
@@ -116,54 +116,49 @@ application_name=pg-1,instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-
 `pg_ha_replication_replay_lag_seconds{namespace="pg-ha"}`
 
 ```
-application_name=pg-0,instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2,state=streaming,sync_state=async 0.0022
-application_name=pg-1,instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2,state=streaming,sync_state=sync 0.002216
+application_name=pg-0,instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2,state=streaming,sync_state=async 0.002518
+application_name=pg-1,instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2,state=streaming,sync_state=sync 0.002498
 ```
 
 `pg_ha_slot_retained_bytes{namespace="pg-ha"}`
 
 ```
-instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-0,slot_name=pg_1,slot_type=physical 0
-instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-0,slot_name=pg_2,slot_type=physical 0
-instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-1,slot_name=pg_0,slot_type=physical 0
-instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-1,slot_name=pg_2,slot_type=physical 0
 instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2,slot_name=pg_0,slot_type=physical 0
 instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2,slot_name=pg_1,slot_type=physical 0
+instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-0,slot_name=pg_1,slot_type=physical 0
+instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-0,slot_name=pg_2,slot_type=physical 0
+instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-1,slot_name=pg_0,slot_type=physical 0
+instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-1,slot_name=pg_2,slot_type=physical 0
 ```
 
 `pg_stat_archiver_failed_count{namespace="pg-ha"}`
 
 ```
-instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-0 0
-instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-1 0
 instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2 0
+instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-0 0
+instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-1 0
 ```
 
 `pg_ha_archive_oldest_ready_seconds{namespace="pg-ha"}`
 
 ```
-instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-0 0
-instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-1 0
 instance=pg-2,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-2,pod=pg-2 0
+instance=pg-0,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-0,pod=pg-0 0
+instance=pg-1,job=postgres,namespace=pg-ha,node=k3d-pg-ha-agent-1,pod=pg-1 0
 ```
 
 `kube_cronjob_created{namespace="pg-ha"}`
 
 ```
-cronjob=pg-restore-test,instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,namespace=pg-ha 1795620459
-cronjob=pg-backup,instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,namespace=pg-ha 1795611527
+cronjob=pg-backup,instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,namespace=pg-ha 1795704387
+cronjob=pg-restore-test,instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,namespace=pg-ha 1795704387
 ```
 
 `kube_job_status_succeeded{namespace="pg-ha", job_name=~"pg-backup-.+|pg-restore-test.*"}`
 
 ```
-instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,job_name=pg-restore-test-29927025,namespace=pg-ha 1
-instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,job_name=pg-backup-manual-20261125130202,namespace=pg-ha 1
-instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,job_name=pg-backup-manual-20261125172539,namespace=pg-ha 0
-instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,job_name=pg-backup-manual-20261125172613,namespace=pg-ha 0
-instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,job_name=pg-backup-29927280,namespace=pg-ha 0
-instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,job_name=pg-restore-test-29927340,namespace=pg-ha 1
-instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,job_name=pg-backup-manual-20261126140930,namespace=pg-ha 1
+instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,job_name=pg-backup-29928460,namespace=pg-ha 1
+instance=kube-state-metrics.monitoring.svc:8080,job=kube-state-metrics,job_name=pg-restore-test-29928480,namespace=pg-ha 1
 ```
 
 `kube_statefulset_replicas{namespace="pg-ha", statefulset="pg"}`
@@ -181,16 +176,16 @@ deployment=coredns,instance=kube-state-metrics.monitoring.svc:8080,job=kube-stat
 `node_filesystem_avail_bytes{mountpoint="/"}`
 
 ```
-device=overlay,fstype=overlay,instance=k3d-pg-ha-server-0,job=node,mountpoint=/,node=k3d-pg-ha-server-0 36983599104
-device=overlay,fstype=overlay,instance=k3d-pg-ha-agent-1,job=node,mountpoint=/,node=k3d-pg-ha-agent-1 36983599104
-device=overlay,fstype=overlay,instance=k3d-pg-ha-agent-2,job=node,mountpoint=/,node=k3d-pg-ha-agent-2 36983578624
-device=overlay,fstype=overlay,instance=k3d-pg-ha-agent-0,job=node,mountpoint=/,node=k3d-pg-ha-agent-0 36983529472
+device=overlay,fstype=overlay,instance=k3d-pg-ha-agent-0,job=node,mountpoint=/,node=k3d-pg-ha-agent-0 36716711936
+device=overlay,fstype=overlay,instance=k3d-pg-ha-agent-1,job=node,mountpoint=/,node=k3d-pg-ha-agent-1 36716445696
+device=overlay,fstype=overlay,instance=k3d-pg-ha-agent-2,job=node,mountpoint=/,node=k3d-pg-ha-agent-2 36716437504
+device=overlay,fstype=overlay,instance=k3d-pg-ha-server-0,job=node,mountpoint=/,node=k3d-pg-ha-server-0 36716429312
 ```
 
 ## Rules
 
 ```console
-$ jq -r '.data.groups[] | .name as $g | .rules[] | "\($g) \(.name) \(.health) \(.state)"' /tmp/tmp.FMDtkxFdgH
+$ jq -r '.data.groups[] | .name as $g | .rules[] | "\($g) \(.name) \(.health) \(.state)"' /tmp/tmp.FivsLskJks
 pg-ha-archive-backup ArchiveFailing ok inactive
 pg-ha-archive-backup ArchiveStale ok inactive
 pg-ha-archive-backup BackupFailed ok inactive
@@ -226,22 +221,22 @@ Primary `pg-2` on `k3d-pg-ha-agent-2`, async standby `pg-0`. Its stream is limit
 <!-- summary -->
 | Measure | Before | Peak during throttle | After |
 |---|---:|---:|---:|
-| Lag bytes (pg-0) | 0 | 218599592 | 0 |
-| Lag seconds (pg-0) | 0.0022 | 124.603227 | 0 |
+| Lag bytes (pg-0) | 0 | 218957800 | 0 |
+| Lag seconds (pg-0) | 0.002518 | 120.599388 | 0 |
 
 | Event | Time (UTC) | Seconds after throttle start |
 |---|---|---:|
-| Throttle on | 14:15:46 | 0 |
-| ReplicationLagHigh first seen firing | 14:17:54 | 128 |
-| Throttle off | 14:17:55 | 129 |
-| Lag back under 1 MiB and 1 s | 14:18:11 | 145 |
-| ReplicationLagHigh gone from Alertmanager | 14:18:11 | 145 |
+| Throttle on | 16:05:54 | 0 |
+| ReplicationLagHigh first seen firing | 16:08:02 | 128 |
+| Throttle off | 16:08:04 | 130 |
+| Lag back under 1 MiB and 1 s | 16:08:20 | 146 |
+| ReplicationLagHigh gone from Alertmanager | 16:08:20 | 146 |
 <!-- /summary -->
 
 Alertmanager while firing:
 
 ```
-ReplicationLagHigh/bytes severity=warning pod=- startsAt=2026-11-26T14:17:50.387Z
+ReplicationLagHigh/bytes severity=warning pod=- startsAt=2026-11-26T16:08:00.387Z
 ```
 
 ## Resources with monitoring running
@@ -250,53 +245,53 @@ Measured after the lag test. Memory per component is the resident set of its mai
 
 ```console
 $ promq 'sum by (job) (process_resident_memory_bytes)'
-job=alertmanager 43806720
-job=node 83902464
-job=prometheus 163307520
-job=postgres 61923328
-job=kube-state-metrics-self 59498496
+job=node 82780160
+job=prometheus 143986688
+job=postgres 62967808
+job=kube-state-metrics-self 56938496
+job=alertmanager 41738240
 ```
 
 ```console
 $ promq 'prometheus_tsdb_head_series'
-instance=localhost:9090,job=prometheus 4832
+instance=localhost:9090,job=prometheus 5001
 ```
 
 ```console
 $ promq 'sum(prometheus_tsdb_storage_blocks_bytes) + sum(prometheus_tsdb_wal_storage_size_bytes) + sum(prometheus_tsdb_head_chunks_storage_size_bytes)'
- 92785693
+ 12911490
 ```
 
 ```console
 $ docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}' $(docker ps -q --filter name=k3d-pg-ha)
-k3d-pg-ha-agent-2 275.8MiB / 15.61GiB 2.51%
-k3d-pg-ha-agent-1 274.9MiB / 15.61GiB 2.97%
-k3d-pg-ha-agent-0 249.6MiB / 15.61GiB 4.82%
-k3d-pg-ha-server-0 720.6MiB / 15.61GiB 9.35%
+k3d-pg-ha-agent-2 314.5MiB / 15.61GiB 1.94%
+k3d-pg-ha-agent-1 300.8MiB / 15.61GiB 4.02%
+k3d-pg-ha-agent-0 350.5MiB / 15.61GiB 2.65%
+k3d-pg-ha-server-0 776.8MiB / 15.61GiB 16.50%
 ```
 
 ```console
 $ free -m
                total        used        free      shared  buff/cache   available
-Mem:           15985        2616        9710         126        4123       13369
+Mem:           15985        2717        9428         261        4435       13268
 Swap:              0           0           0
 ```
 
 ```console
 $ df -h /
 Filesystem      Size  Used Avail Use% Mounted on
-/dev/root        48G   14G   35G  28% /
+/dev/root        48G   14G   34G  29% /
 ```
 
 <!-- summary -->
 | Component (scrape job) | Processes | Resident memory, total |
 |---|---:|---:|
-| alertmanager | 1 | 42 MiB |
-| kube-state-metrics-self | 1 | 57 MiB |
-| node | 4 | 80 MiB |
-| postgres | 3 | 59 MiB |
-| prometheus | 1 | 156 MiB |
-| Prometheus TSDB on disk | | 88 MiB |
-| Host memory used / total | | 2626 / 15985 MiB |
-| Host disk used / size (/) | | 14G / 48G (28%) |
+| alertmanager | 1 | 40 MiB |
+| kube-state-metrics-self | 1 | 54 MiB |
+| node | 4 | 79 MiB |
+| postgres | 3 | 60 MiB |
+| prometheus | 1 | 137 MiB |
+| Prometheus TSDB on disk | | 12 MiB |
+| Host memory used / total | | 2728 / 15985 MiB |
+| Host disk used / size (/) | | 14G / 48G (29%) |
 <!-- /summary -->

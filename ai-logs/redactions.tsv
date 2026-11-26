@@ -1,0 +1,35 @@
+session_file	rule	occurrences
+38dd8981-353b-45be-9a43-7bc7dc3140b6.jsonl	R-001/R-002 garage-s3-access-key-id	24
+38dd8981-353b-45be-9a43-7bc7dc3140b6.jsonl	gcp-project-id	322
+38dd8981-353b-45be-9a43-7bc7dc3140b6.jsonl	email	6
+38dd8981-353b-45be-9a43-7bc7dc3140b6.jsonl	home-path	234
+38dd8981-353b-45be-9a43-7bc7dc3140b6.jsonl	username	260
+38dd8981-353b-45be-9a43-7bc7dc3140b6.jsonl	public-ipv4	3
+b2ebea08-4f5e-4379-8f0b-730ca89018db.jsonl	gcp-project-id	2007
+b2ebea08-4f5e-4379-8f0b-730ca89018db.jsonl	gcp-project-number	16
+b2ebea08-4f5e-4379-8f0b-730ca89018db.jsonl	email	28
+b2ebea08-4f5e-4379-8f0b-730ca89018db.jsonl	home-path	1783
+b2ebea08-4f5e-4379-8f0b-730ca89018db.jsonl	username	120
+b2ebea08-4f5e-4379-8f0b-730ca89018db.jsonl	public-ipv4	68
+cf5397ce-e4bd-408e-bf16-e7bd63878dde.jsonl	R-001/R-002 garage-s3-access-key-id	2
+cf5397ce-e4bd-408e-bf16-e7bd63878dde.jsonl	gcp-project-id	1403
+cf5397ce-e4bd-408e-bf16-e7bd63878dde.jsonl	gcp-project-path	2
+cf5397ce-e4bd-408e-bf16-e7bd63878dde.jsonl	email	8
+cf5397ce-e4bd-408e-bf16-e7bd63878dde.jsonl	home-path	1114
+cf5397ce-e4bd-408e-bf16-e7bd63878dde.jsonl	username	209
+cf5397ce-e4bd-408e-bf16-e7bd63878dde.jsonl	public-ipv4	2
+d597e1ae-c6c0-481d-b109-4bd17abe23ea.jsonl	gcp-project-id	1315
+d597e1ae-c6c0-481d-b109-4bd17abe23ea.jsonl	email	6
+d597e1ae-c6c0-481d-b109-4bd17abe23ea.jsonl	home-path	1020
+d597e1ae-c6c0-481d-b109-4bd17abe23ea.jsonl	username	124
+e73dfe31-c4f5-4462-88b4-bec9dcc42812.jsonl	R-001/R-002 garage-s3-access-key-id	20
+e73dfe31-c4f5-4462-88b4-bec9dcc42812.jsonl	gcp-project-id	4411
+e73dfe31-c4f5-4462-88b4-bec9dcc42812.jsonl	email	21
+e73dfe31-c4f5-4462-88b4-bec9dcc42812.jsonl	home-path	3283
+e73dfe31-c4f5-4462-88b4-bec9dcc42812.jsonl	username	597
+e73dfe31-c4f5-4462-88b4-bec9dcc42812.jsonl	public-ipv4	2
+ef576bb9-39b0-44b0-8766-fdd633c93e79.jsonl	gcp-project-id	1649
+ef576bb9-39b0-44b0-8766-fdd633c93e79.jsonl	email	12
+ef576bb9-39b0-44b0-8766-fdd633c93e79.jsonl	home-path	1246
+ef576bb9-39b0-44b0-8766-fdd633c93e79.jsonl	username	133
+ef576bb9-39b0-44b0-8766-fdd633c93e79.jsonl	public-ipv4	2

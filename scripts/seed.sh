@@ -34,6 +34,10 @@ spec:
         args:
         - |
           echo "seed: pgbench -i -s __SCALE__ through $PGHOST"
+          # L7: same NetworkPolicy admission race as the backup Job (L6 history): a new pod's first connection
+          # can be refused for a fraction of a second. Wait up to 30 s for pg-rw (pg_isready sends no credentials).
+          i=0; until pg_isready -q -t 1 || [ $i -ge 60 ]; do i=$((i+1)); sleep 0.5; done
+          [ $i -eq 0 ] || echo "seed: pg-rw reachable after $i retries"
           pgbench -i -s __SCALE__ -q --no-vacuum
           psql -XAtqc "vacuum analyze pgbench_accounts, pgbench_branches, pgbench_tellers, pgbench_history"
           psql -XAtc "select 'server=' || inet_server_addr() || ' in_recovery=' || pg_is_in_recovery() || ' ssl=' || (select ssl from pg_stat_ssl where pid = pg_backend_pid())"

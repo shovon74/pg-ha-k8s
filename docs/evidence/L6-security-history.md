@@ -61,6 +61,8 @@ Final pass (26 Nov), after the backup fix. The fix rolled the Postgres pods, so 
 
 **Side effects left.** The failed Jobs `pg-backup-29927280`, `pg-backup-manual-20261125172539` and `pg-backup-manual-20261125172613` remain until the CronJob's failed-history limit or a manual cleanup removes them. `BackupJobFailed` stopped firing once a backup succeeded.
 
+**Cleanup (26 Nov, L7).** The three failed Jobs were deleted at 14:43 UTC by the first step of `scripts/l7-clean-run.sh` (`kubectl delete job`, output in `.run/l7/00-delete-failed-jobs.log`), immediately before that script ran `make down` and rebuilt the cluster from scratch.
+
 ## Test bug found in the regression: lag peak read from a stale series
 
 `tests/l5-metrics.sh` read the peak as `max_over_time(lag[10m])` and took the first result. The fix's rolling restart moved the leader 2 minutes before the test, so the query returned three series: two from earlier pg-1 instances (peak 0) and the current primary pg-2 (218 MB). The test reported peak 0 while ReplicationLagHigh fired. Every lag read now aggregates with `max()`. This also protects the "back to near zero" check, which could otherwise pass on a stale zero series.

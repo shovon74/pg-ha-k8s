@@ -47,7 +47,7 @@ Hand-written notes: [`L5-monitoring-history.md`](L5-monitoring-history.md).
 | Archiver failure counter: 3 series (need 3) | PASS |
 | Archive backlog (.ready): 3 series (need 3) | PASS |
 | Backup and restore-test CronJobs: 2 series (need 2) | PASS |
-| Backup or restore-test Job status: 7 series (need 1) | PASS |
+| Backup or restore-test Job status: 2 series (need 1) | PASS |
 | Expected member count: 1 series (need 1) | PASS |
 | CoreDNS availability: 1 series (need 1) | PASS |
 | Root filesystem free space per node: 4 series (need 4) | PASS |
@@ -55,34 +55,34 @@ Hand-written notes: [`L5-monitoring-history.md`](L5-monitoring-history.md).
 | 19 alerting rules loaded | PASS |
 | Every rule evaluates without error | PASS |
 | No warning or critical alert firing before the fault | PASS |
-| Lag in bytes rose above the 16 MiB threshold (peak 218599592) | PASS |
-| Lag in seconds rose above the 30 s threshold (peak 124.603227) | PASS |
+| Lag in bytes rose above the 16 MiB threshold (peak 218957800) | PASS |
+| Lag in seconds rose above the 30 s threshold (peak 120.599388) | PASS |
 | The standby stayed connected during the throttle (state streaming) | PASS |
 | ReplicationLagHigh fired in Alertmanager | PASS |
 | Lag returned to near zero (< 1 MiB, < 1 s) within 180 s of removing the throttle | PASS |
 | ReplicationLagHigh resolved in Alertmanager | PASS |
 | Measure | Before | Peak during throttle | After |
 |---|---:|---:|---:|
-| Lag bytes (pg-0) | 0 | 218599592 | 0 |
-| Lag seconds (pg-0) | 0.0022 | 124.603227 | 0 |
+| Lag bytes (pg-0) | 0 | 218957800 | 0 |
+| Lag seconds (pg-0) | 0.002518 | 120.599388 | 0 |
 
 | Event | Time (UTC) | Seconds after throttle start |
 |---|---|---:|
-| Throttle on | 14:15:46 | 0 |
-| ReplicationLagHigh first seen firing | 14:17:54 | 128 |
-| Throttle off | 14:17:55 | 129 |
-| Lag back under 1 MiB and 1 s | 14:18:11 | 145 |
-| ReplicationLagHigh gone from Alertmanager | 14:18:11 | 145 |
+| Throttle on | 16:05:54 | 0 |
+| ReplicationLagHigh first seen firing | 16:08:02 | 128 |
+| Throttle off | 16:08:04 | 130 |
+| Lag back under 1 MiB and 1 s | 16:08:20 | 146 |
+| ReplicationLagHigh gone from Alertmanager | 16:08:20 | 146 |
 | Component (scrape job) | Processes | Resident memory, total |
 |---|---:|---:|
-| alertmanager | 1 | 42 MiB |
-| kube-state-metrics-self | 1 | 57 MiB |
-| node | 4 | 80 MiB |
-| postgres | 3 | 59 MiB |
-| prometheus | 1 | 156 MiB |
-| Prometheus TSDB on disk | | 88 MiB |
-| Host memory used / total | | 2626 / 15985 MiB |
-| Host disk used / size (/) | | 14G / 48G (28%) |
+| alertmanager | 1 | 40 MiB |
+| kube-state-metrics-self | 1 | 54 MiB |
+| node | 4 | 79 MiB |
+| postgres | 3 | 60 MiB |
+| prometheus | 1 | 137 MiB |
+| Prometheus TSDB on disk | | 12 MiB |
+| Host memory used / total | | 2728 / 15985 MiB |
+| Host disk used / size (/) | | 14G / 48G (29%) |
 
 ## Alerts on a node failover (R10.3)
 
@@ -96,23 +96,23 @@ Hand-written notes: [`L5-monitoring-history.md`](L5-monitoring-history.md).
 | MemberDown names the old primary pg-2 | PASS |
 | FailoverOccurred fired (new primary pg-1) | PASS |
 | A new primary took over (pg-1, 23 s after the fault) | PASS |
-| Cluster healthy again: 1 leader, 2 streaming, 1 sync (18 s after docker start) | PASS |
+| Cluster healthy again: 1 leader, 2 streaming, 1 sync (22 s after docker start) | PASS |
 | MemberDown, ReplicaNotStreaming and FailoverOccurred all resolved | PASS |
 | NoPrimary never fired (failover finished within its 45 s delay) | PASS |
 | MultiplePrimaries never fired | PASS |
 | No warning or critical alert firing at the end | PASS |
 | Event | Time | Seconds after fault |
 |---|---|---:|
-| docker stop k3d-pg-ha-agent-2 (primary pg-2) | 16:46:41 | 0 |
-| New primary pg-1 holds the lock | 16:47:04 | 23 |
-| docker start | 16:49:44 | 183 |
-| Cluster healthy (3 members, sync standby) | 16:50:02 | 201 |
+| docker stop k3d-pg-ha-agent-2 (primary pg-2) | 16:08:25 | 0 |
+| New primary pg-1 holds the lock | 16:08:48 | 23 |
+| docker start | 16:11:30 | 185 |
+| Cluster healthy (3 members, sync standby) | 16:11:52 | 207 |
 
 | Alert | First seen firing | s after fault | Gone | s after fault |
 |---|---|---:|---|---:|
-| MemberDown | 16:47:32 | 51 | 16:50:13 | 212 |
-| ReplicaNotStreaming | 16:48:51 | 130 | 16:50:13 | 212 |
-| FailoverOccurred | 16:47:10 | 29 | 16:52:10 | 329 |
+| MemberDown | 16:09:15 | 50 | 16:12:02 | 217 |
+| ReplicaNotStreaming | 16:10:32 | 127 | 16:12:02 | 217 |
+| FailoverOccurred | 16:09:04 | 39 | 16:14:05 | 340 |
 
 ## Alerts on an object-storage outage (R10.3, R9.6)
 
@@ -123,23 +123,23 @@ Hand-written notes: [`L5-monitoring-history.md`](L5-monitoring-history.md).
 | No warning or critical alert firing before the fault | PASS |
 | ArchiveFailing fired | PASS |
 | ArchiveStale fired | PASS |
-| Writes continued during the outage (9 WAL fills succeeded, 0 failed) | PASS |
-| Primary did not change during the outage (pg-2) | PASS |
-| WAL waited in .ready during the outage (11 segments) | PASS |
-| Archive caught up: no .ready segment left (13 s after unblocking) | PASS |
-| Last archived segment 000000240000000000000090 is at or past the newest segment that waited (000000240000000000000090) | PASS |
-| A new segment is archived within 90 s after recovery (2.71 s, no new failures: 0) | PASS |
+| Writes continued during the outage (8 WAL fills succeeded, 0 failed) | PASS |
+| Primary did not change during the outage (pg-1) | PASS |
+| WAL waited in .ready during the outage (9 segments) | PASS |
+| Archive caught up: no .ready segment left (14 s after unblocking) | PASS |
+| Last archived segment 0000001800000000000000C1 is at or past the newest segment that waited (0000001800000000000000C1) | PASS |
+| A new segment is archived within 90 s after recovery (1.79 s, no new failures: 0) | PASS |
 | ArchiveFailing and ArchiveStale resolved | PASS |
 | No warning or critical alert firing at the end | PASS |
 | Event | Time | Seconds after fault |
 |---|---|---:|
-| Primary pg-2 blocked from Garage | 16:39:15 | 0 |
-| Block removed | 16:41:29 | 134 |
-| No .ready segment left (caught up) | 16:41:42 | 147 |
+| Primary pg-1 blocked from Garage | 16:21:24 | 0 |
+| Block removed | 16:23:39 | 135 |
+| No .ready segment left (caught up) | 16:23:53 | 149 |
 
 | Alert | First seen firing | s after fault | Gone | s after fault |
 |---|---|---:|---|---:|
-| ArchiveFailing | 16:40:32 | 77 | 16:46:19 | 424 |
-| ArchiveStale | 16:41:28 | 133 | 16:41:57 | 162 |
+| ArchiveFailing | 16:22:42 | 78 | 16:28:32 | 428 |
+| ArchiveStale | 16:23:38 | 134 | 16:24:01 | 157 |
 
-Archiver failures during the test: 2. Segments waiting at the end of the outage: 11.
+Archiver failures during the test: 2. Segments waiting at the end of the outage: 9.

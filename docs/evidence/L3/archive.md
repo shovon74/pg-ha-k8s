@@ -3,7 +3,7 @@
 **Result: PASS**
 
 - **What:** Garage from our manifests with an idempotent Admin API bootstrap, pgBackRest with every repo1-* setting in repo.conf and an encrypted repository, async WAL archiving added as Patroni conf.d/20-archive.yml, stanza and check as a Job over the TLS server, and `make backup` (full, expire, verify).
-- **Run:** 2026-11-25T07:52:03Z (UTC), 80 s
+- **Run:** 2026-11-26T15:36:36Z (UTC), 96 s
 - **Reproduce:** `make test-archive`
 - **Versions:** k3s `rancher/k3s:v1.35.10-k3s1`, image `pg-ha-postgres:17.12-patroni4.1.5-pgbackrest2.60.1`, Garage `dxflrs/garage:v2.5.0`
 - **History:** [`L3-backup-history.md`](../L3-backup-history.md) (maintained by hand)
@@ -34,14 +34,14 @@
 $ kubectl -n pg-ha get deploy,pvc,svc -l app.kubernetes.io/name=garage -o wide; kubectl -n pg-ha get pvc garage-data; kubectl -n pg-ha get pod -l app.kubernetes.io/name=garage -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,READY:.status.containerStatuses[0].ready,IMAGE:.spec.containers[0].image
 No resources found in pg-ha namespace.
 NAME          STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
-garage-data   Bound    pvc-cc5fb71e-991b-4dba-be6f-877f2f42710c   5Gi        RWO            local-path     <unset>                 49m
+garage-data   Bound    pvc-750e168c-cc9a-492d-a8db-f01139e43335   5Gi        RWO            local-path     <unset>                 50m
 POD                       NODE                 READY   IMAGE
-garage-6687844f64-ld7gj   k3d-pg-ha-server-0   true    dxflrs/garage:v2.5.0@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5
+garage-78b588844b-769mb   k3d-pg-ha-server-0   true    dxflrs/garage:v2.5.0@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5
 ```
 
 ```console
 $ printf '%s\n' "$BOOT"
-deployment "garage" successfully rolled out
+curl: (7) Failed to connect to garage:3903 after 2 ms: Could not connect to server
 layout: version 1 exists, kept
 key: exists, kept
 bucket: exists, kept
@@ -82,110 +82,63 @@ ssl on
 
 ```console
 $ q pg-rw.pg-ha.svc.cluster.local monitor 'select archived_count, failed_count, last_archived_wal, last_archived_time, last_failed_wal, last_failed_time from pg_stat_archiver'
-37 1 000000230000000000000044 2026-11-25 07:51:41.512685+00 00000023000000000000003B 2026-11-25 07:51:27.818258+00
+4 0 000000160000000000000042 2026-11-26 15:36:35.520598+00  
 ```
 
 Failures counted before the stanza existed are expected: Postgres starts archiving before the stanza Job runs and retries each segment until it succeeds. The checks below therefore require no failure during this test, and that the last failure (if any) is older than the last successful archive. The pre-stanza failures are recorded in the history file.
 
 ```console
 $ q pg-rw.pg-ha.svc.cluster.local monitor 'select archived_count, failed_count, last_archived_wal, last_archived_time, last_failed_wal, last_failed_time from pg_stat_archiver'
-38 1 000000230000000000000045 2026-11-25 07:52:41.627711+00 00000023000000000000003B 2026-11-25 07:51:27.818258+00
+5 0 000000160000000000000043 2026-11-26 15:37:35.412447+00  
 ```
 
 ## Stanza (idempotent) and pgbackrest check, from Jobs over TLS
 
 ```console
 $ JOB_WAIT=300 scripts/pgbr-job.sh pg-stanza-create 'pgbackrest --stanza=main --log-level-console=info stanza-create && pgbackrest --stanza=main --log-level-console=info check && echo STANZA_OK' | grep -vE 'command begin'
-2026-11-25 07:52:44.288 P00   INFO: stanza-create for stanza 'main' on repo1
-2026-11-25 07:52:44.303 P00   INFO: stanza 'main' already exists on repo1 and is valid
-2026-11-25 07:52:44.305 P00   INFO: stanza-create command end: completed successfully (140ms)
-2026-11-25 07:52:44.434 P00   INFO: check repo1 (standby)
-2026-11-25 07:52:44.446 P00   INFO: switch wal not performed because this is a standby
-2026-11-25 07:52:44.447 P00   INFO: check repo1 configuration (primary)
-2026-11-25 07:52:44.575 P00   INFO: check repo1 archive for WAL (primary)
-2026-11-25 07:52:45.001 P00   INFO: WAL segment 000000230000000000000046 successfully archived to '/pg-ha/archive/main/17-1/0000002300000000/000000230000000000000046-e0e9f9a8181e517101743e6fa39a09d0d9d5ffca.zst' on repo1
-2026-11-25 07:52:45.004 P00   INFO: check command end: completed successfully (687ms)
+2026-11-26 15:37:38.960 P00   INFO: stanza-create for stanza 'main' on repo1
+2026-11-26 15:37:38.973 P00   INFO: stanza 'main' already exists on repo1 and is valid
+2026-11-26 15:37:38.974 P00   INFO: stanza-create command end: completed successfully (1242ms)
+2026-11-26 15:37:39.083 P00   INFO: check repo1 (standby)
+2026-11-26 15:37:39.091 P00   INFO: switch wal not performed because this is a standby
+2026-11-26 15:37:39.092 P00   INFO: check repo1 configuration (primary)
+2026-11-26 15:37:39.219 P00   INFO: check repo1 archive for WAL (primary)
+2026-11-26 15:37:39.527 P00   INFO: WAL segment 000000160000000000000044 successfully archived to '/pg-ha/archive/main/17-1/0000001600000000/000000160000000000000044-44f024aac425c7d2a349afee49b094f9cbe0c4a7.zst' on repo1
+2026-11-26 15:37:39.529 P00   INFO: check command end: completed successfully (543ms)
 STANZA_OK
 ```
 
 ## On-demand backup: make backup (full, expire, verify)
 
 ```console
-$ scripts/pgbr-job.sh pg-backup-manual-20261125075250 | grep -vE 'command begin'
-2026-11-25T07:52:51Z full backup
-2026-11-25 07:52:52.472 P00   INFO: backup start archive = 000000230000000000000048, lsn = 0/48000028
-2026-11-25 07:53:09.475 P00   INFO: backup stop archive = 000000230000000000000048, lsn = 0/48000158
-2026-11-25 07:53:09.748 P00   INFO: new backup label = 20261125-075251F
-2026-11-25 07:53:09.963 P00   INFO: full backup size = 180.4MB, file total = 1293
-2026-11-25T07:53:10Z expire (repo1-retention-full from repo.conf, or PGBACKREST_REPO1_RETENTION_FULL for a test)
-2026-11-25 07:53:10.705 P00   INFO: repo1: 17-1 no archive to remove
-2026-11-25 07:53:10.728 P00   INFO: expire command end: completed successfully (362ms)
-2026-11-25T07:53:10Z verify
+$ scripts/pgbr-job.sh pg-backup-manual-20261126153743 | grep -vE 'command begin'
+2026-11-26T15:37:45Z pg-rw reachable after 3 attempts
+2026-11-26T15:37:47Z fingerprint recorded as annotations: seeded=yes rows.pgbench_branches=10 sum.pgbench_branches=3530232442 rows.pgbench_tellers=100 sum.pgbench_tellers=9319411032 rows.pgbench_accounts=1000000 sum.pgbench_accounts=1637876347759 
+2026-11-26T15:37:47Z full backup
+2026-11-26 15:37:47.662 P00   INFO: backup start archive = 000000160000000000000046, lsn = 0/46000028
+2026-11-26 15:38:01.820 P00   INFO: backup stop archive = 000000160000000000000046, lsn = 0/46000158
+2026-11-26 15:38:02.062 P00   INFO: new backup label = 20261126-153747F
+2026-11-26 15:38:02.219 P00   INFO: full backup size = 180.1MB, file total = 1293
+2026-11-26T15:38:02Z expire (repo1-retention-full from repo.conf, or PGBACKREST_REPO1_RETENTION_FULL for a test)
+2026-11-26 15:38:02.342 P00   INFO: expire command end: completed successfully (50ms)
+2026-11-26T15:38:02Z verify
 status: ok
-archiveId: 17-1, total WAL checked: 48, total valid WAL: 48
+archiveId: 17-1, total WAL checked: 82, total valid WAL: 82
 missing: 0, checksum invalid: 0, size invalid: 0, other: 0
-backup: 20261125-073042F, status: valid, total files checked: 1293, total valid files: 1293
+backup: 20261126-153747F, status: valid, total files checked: 1293, total valid files: 1293
 missing: 0, checksum invalid: 0, size invalid: 0, other: 0
-backup: 20261125-073333F, status: valid, total files checked: 1293, total valid files: 1293
-missing: 0, checksum invalid: 0, size invalid: 0, other: 0
-backup: 20261125-073430F, status: valid, total files checked: 1293, total valid files: 1293
-missing: 0, checksum invalid: 0, size invalid: 0, other: 0
-backup: 20261125-073803F, status: valid, total files checked: 1293, total valid files: 1293
-missing: 0, checksum invalid: 0, size invalid: 0, other: 0
-backup: 20261125-074320F, status: valid, total files checked: 1293, total valid files: 1293
-missing: 0, checksum invalid: 0, size invalid: 0, other: 0
-backup: 20261125-074914F, status: valid, total files checked: 1293, total valid files: 1293
-missing: 0, checksum invalid: 0, size invalid: 0, other: 0
-backup: 20261125-075251F, status: valid, total files checked: 1293, total valid files: 1293
-missing: 0, checksum invalid: 0, size invalid: 0, other: 0
-2026-11-25T07:53:19Z VERIFY_OK
+2026-11-26T15:38:06Z VERIFY_OK
 stanza: main
     status: ok
     cipher: aes-256-cbc
 
     db (current)
-        wal archive min/max (17): 0000001C000000000000001F/000000230000000000000048
+        wal archive min/max (17): 000000010000000000000001/000000160000000000000046
 
-        full backup: 20261125-073042F
-            timestamp start/stop: 2026-11-25 07:30:42+00 / 2026-11-25 07:30:58+00
-            wal start/stop: 0000001C000000000000001F / 0000001C000000000000001F
-            database size: 180.2MB, database backup size: 180.2MB
+        full backup: 20261126-153747F
+            timestamp start/stop: 2026-11-26 15:37:47+00 / 2026-11-26 15:38:01+00
+            wal start/stop: 000000160000000000000046 / 000000160000000000000046
+            database size: 180.1MB, database backup size: 180.1MB
             repo1: backup set size: 10.4MB, backup size: 10.4MB
-
-        full backup: 20261125-073333F
-            timestamp start/stop: 2026-11-25 07:33:33+00 / 2026-11-25 07:33:50+00
-            wal start/stop: 0000001C0000000000000021 / 0000001C0000000000000021
-            database size: 180.2MB, database backup size: 180.2MB
-            repo1: backup set size: 10.4MB, backup size: 10.4MB
-
-        full backup: 20261125-073430F
-            timestamp start/stop: 2026-11-25 07:34:30+00 / 2026-11-25 07:34:48+00
-            wal start/stop: 0000001C0000000000000023 / 0000001C0000000000000023
-            database size: 180.2MB, database backup size: 180.2MB
-            repo1: backup set size: 10.4MB, backup size: 10.4MB
-
-        full backup: 20261125-073803F
-            timestamp start/stop: 2026-11-25 07:38:03+00 / 2026-11-25 07:38:22+00
-            wal start/stop: 0000001D0000000000000028 / 0000001D0000000000000028
-            database size: 180.2MB, database backup size: 180.2MB
-            repo1: backup set size: 10.4MB, backup size: 10.4MB
-
-        full backup: 20261125-074320F
-            timestamp start/stop: 2026-11-25 07:43:20+00 / 2026-11-25 07:43:37+00
-            wal start/stop: 000000200000000000000030 / 000000200000000000000030
-            database size: 180.3MB, database backup size: 180.3MB
-            repo1: backup set size: 10.4MB, backup size: 10.4MB
-
-        full backup: 20261125-074914F
-            timestamp start/stop: 2026-11-25 07:49:14+00 / 2026-11-25 07:49:32+00
-            wal start/stop: 000000230000000000000038 / 000000230000000000000038
-            database size: 180.3MB, database backup size: 180.3MB
-            repo1: backup set size: 10.4MB, backup size: 10.4MB
-
-        full backup: 20261125-075251F
-            timestamp start/stop: 2026-11-25 07:52:51+00 / 2026-11-25 07:53:09+00
-            wal start/stop: 000000230000000000000048 / 000000230000000000000048
-            database size: 180.4MB, database backup size: 180.4MB
-            repo1: backup set size: 10.5MB, backup size: 10.5MB
-2026-11-25T07:53:19Z BACKUP_JOB_OK
+2026-11-26T15:38:06Z BACKUP_JOB_OK
 ```

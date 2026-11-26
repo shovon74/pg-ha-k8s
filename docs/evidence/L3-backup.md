@@ -51,13 +51,13 @@ Hand-written notes: [`L3-backup-history.md`](L3-backup-history.md).
 
 | Check | Result |
 |---|---|
-| Backup 1 (20261125-072655F) completed with verify status ok | PASS |
-| Backup 2 (20261125-073042F) completed with verify status ok | PASS |
-| Backup 3 (20261125-073333F) completed with verify status ok | PASS |
+| Backup 1 (20261126-154057F) completed with verify status ok | PASS |
+| Backup 2 (20261126-154350F) completed with verify status ok | PASS |
+| Backup 3 (20261126-154644F) completed with verify status ok | PASS |
 | Exactly the 2 newest fulls remain | PASS |
-| The oldest backup from before the test (20261125-071559F) and backup 1 (20261125-072655F) were expired | PASS |
+| The oldest backup from before the test (20261126-153747F) and backup 1 (20261126-154057F) were expired | PASS |
 | WAL older than the oldest kept backup was expired with it (archive min = its start WAL) | PASS |
-| Archive min moved past the expired backup's start WAL (0000001C000000000000001D) | PASS |
+| Archive min moved past the expired backup's start WAL (00000016000000000000004C) | PASS |
 | repo.conf still says repo1-retention-full=7 and the CronJob sets no retention override | PASS |
 | A normal run (retention 7) keeps all 3 fulls | PASS |
 
@@ -70,11 +70,11 @@ Hand-written notes: [`L3-backup-history.md`](L3-backup-history.md).
 | Node failover run passed (RTO, RPO 0, one primary, old primary rejoined) | PASS |
 | Leadership moved to another member on a higher timeline | PASS |
 | The new primary archived a segment within 150 s | PASS |
-| The latest archived segment is on the new timeline (00000010) | PASS |
+| The latest archived segment is on the new timeline (00000017) | PASS |
 | No archive failures on the new primary during the check | PASS |
 | pgbackrest check passes against the new primary | PASS |
 | Backup completed with verify status ok | PASS |
-| The backup started on the new timeline (00000010), so it was taken from the new primary | PASS |
+| The backup started on the new timeline (00000017), so it was taken from the new primary | PASS |
 
 ## Garage restart while writing
 

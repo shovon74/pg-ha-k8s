@@ -12,6 +12,35 @@ k3s runs one CoreDNS replica, and `make up` pins it to the server node (ADR-001,
 - **In production:** run at least two CoreDNS replicas spread across nodes or zones, or use NodeLocal DNSCache, on a control plane with three or more servers.
 - **Decision:** ADR-001.
 
+### One VM, one kernel, one disk
+
+All four k3d "nodes" are containers on one VM. They share a kernel, a disk, a network stack and a power supply. A node failure is simulated by stopping an agent container (D6). That is close to a sudden power loss of a node, but it cannot show a slow or flapping network, a zone outage, a kernel panic on one node only, or a disk that fails under one node. Replication across "nodes" never crosses a real network, so the measured lag and RTO are best-case for network latency.
+
+- **In production:** three or more real nodes across failure domains (zones), with a pod anti-affinity rule on the zone label.
+- **Decision:** ADR-001, D6, D7.
+
+### The API server is a single point of failure for writes
+
+Patroni uses the Kubernetes API as its DCS (ADR-002). There is one server node, so one API server. When it is unreachable the leader cannot renew its lock and demotes, with `failsafe_mode` off. Writes stop for the whole outage plus recovery, while reads continue on all members. Measured: a 60 s outage gave about 86 s without writes. This is the deliberate safe choice: no member can keep writing without a lock.
+
+- **In production:** a control plane with three or more servers (HA etcd), which removes this single point of failure.
+- **Decision:** ADR-002, ADR-006.
+
+### The API-outage evidence predates the final rebuild
+
+`make test-api-outage` is OPTIONAL and was last run on 25 Nov at 07:53 UTC (`docs/evidence/L2/api-outage.md`). That is before the L3 change to re-clone rejoin, the pinned CoreDNS and the L6 NetworkPolicies, and it was not part of the L7 clean run, because stopping the server node is the slowest and most disruptive test. Its result is believed to still hold, because none of those changes touch lock handling, but that is not re-proven.
+
+- **To re-prove:** `make test-api-outage` on a running cluster.
+
+## Failure simulation
+
+### Storage faults are simulated, not real
+
+`make failover-storage` makes the primary's data volume read-only, which Postgres sees as I/O errors on write (D6). It does not reproduce a disk that hangs (I/O stuck in uninterruptible sleep), silent corruption, a full disk or a slow disk. A hung disk is the hardest case: Postgres may neither crash nor answer, and Patroni's liveness check would have to detect it. Data checksums are on, so corrupted pages are detected on read, but no corruption was injected. There is no hardware watchdog in containers, so fencing relies on Patroni demoting itself (ADR-006).
+
+- **In production:** a real watchdog device, plus monitoring of I/O latency and disk errors.
+- **Decision:** ADR-006, D6.
+
 ## Backups
 
 ### Backup repository is not off-site
@@ -19,7 +48,7 @@ k3s runs one CoreDNS replica, and `make up` pins it to the server node (ADR-001,
 The in-cluster Garage repository shares the VM and disk with the database, so it is not off-site disaster protection. In production, the pgBackRest repository points at GCS/S3 with bucket versioning and a retention lock, off-site from the cluster, using keyless workload identity where available.
 
 - **Why it is the default:** `make up` must work for any reviewer with no cloud account or credentials.
-- **Planned option:** R4.7 adds `BACKUP_TARGET=gcs make up`. It is OPTIONAL and not built yet.
+- **Optional overlay not built:** R4.7 (`BACKUP_TARGET=gcs make up`) is OPTIONAL and the lowest priority. It was cut deliberately and is not implemented.
 - **Decision:** ADR-014.
 
 ## Monitoring
@@ -79,3 +108,47 @@ Credentials are generated once per deployment. Rotation is a manual file replace
 
 - **In production:** apply the same rendered policies to the restore namespace, or restore into an isolated cluster.
 - **Decision:** L6, `security.md`.
+
+## Operations
+
+### Minor-version upgrade is documented only
+
+[`runbooks/minor-upgrade.md`](runbooks/minor-upgrade.md) describes the procedure (replicas first, one switchover, then the old primary), but no upgrade was executed. R6.4 accepts a documented procedure. The steps it relies on (`make image`, `make deploy`, `make switchover`, rejoin with a restart) are each tested on their own.
+
+## AI process
+
+### The second-agent comparison was cut
+
+R11.6 (run the Phase 1 design-options prompt through a second agent and compare) is OPTIONAL and was cut deliberately to protect the MUST requirements. The prompt is saved verbatim in `docs/process/prompts/p1-design-options.md`, so the comparison can still be run.
+
+### Grafana was cut
+
+See "No dashboards" above. Cut deliberately (ADR-011).
+
+## L7 clean run
+
+Results of the final from-scratch run are in [`evidence/L7-clean-run.md`](evidence/L7-clean-run.md). Anything that failed twice there is listed here.
+
+### `test-restore-full`: history-file check depends on test order
+
+In the L7 run, one of the ten checks failed twice: it expects a history file for every timeline since timeline 2, but the L3 retention test had legitimately expired the older ones (21 failovers happened before the first backup on the fresh cluster). The restore itself passed every other check, including row counts and checksums. The check should only require history files from the oldest retained backup's timeline onward. Not changed tonight. Details: [`evidence/L7-clean-run-history.md`](evidence/L7-clean-run-history.md).
+
+### Seed Job hit the NetworkPolicy admission race
+
+`make seed` failed twice in the L7 run on the same kube-router race as the L6 backup Job, and was fixed with the same `pg_isready` wait. Other one-shot Jobs that connect to Postgres immediately after start were not audited for this race.
+
+### `test-metrics` lag induction is timing-sensitive
+
+In the L7 run the first attempt did not build enough lag to hold `ReplicationLagHigh` for its 2 minutes. The retry passed with large margins. The test throttles for a fixed time instead of until the alert fires, so on a busy host it can fail without anything being wrong with the alert. Details in [`evidence/L7-clean-run-history.md`](evidence/L7-clean-run-history.md).
+
+### `alerts-archive` fault injection did not always block archiving
+
+In the L7 run the first attempt's block of the primary's traffic to Garage leaked: archiving continued (about 31 segments, one failure), so `ArchiveStale` correctly did not fire and the test failed. The retry blocked properly and passed. The cause of the leak was not diagnosed. Details in [`evidence/L7-clean-run-history.md`](evidence/L7-clean-run-history.md).
+
+### Diverge failover RTO has almost no margin
+
+All three `make failover-diverge` runs in L7 measured 29.41 to 29.50 s against the 30 s target. The scenario holds back replication before stopping the node, so this is the worst case of the modes tested. It passes as measured, and the timing settings were not tuned to widen the margin. A slower host could push it over 30 s, which the harness would report as OVER TARGET.
+
+### Other modes in the L7 run
+
+Every other failure mode passed with margin (node 22.5 to 26.2 s, split-brain 19.6 to 20.6 s, pod 3.3 to 4.3 s, storage 3.0 to 4.7 s, switchover 2.6 to 2.7 s), with RPO 0 in every run. Full table: [`evidence/L7-clean-run.md`](evidence/L7-clean-run.md).
