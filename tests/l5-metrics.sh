@@ -75,7 +75,10 @@ A_IP=$(pod_ip "$ASYNC")
 note "Primary \`$PRIMARY\` on \`$NODE\`, async standby \`$ASYNC\`. Its stream is limited to $LIMIT packets/s until ReplicationLagHigh fires (at most $HOLD s) while a writer fills WAL through pg-rw (one 16 MB+ fill every 10 s). Lag is read from Prometheus, which is what the alerts use."
 LAG_Q="pg_ha_replication_lag_bytes{namespace=\"pg-ha\",application_name=\"$ASYNC\"}"
 SEC_Q="pg_ha_replication_replay_lag_seconds{namespace=\"pg-ha\",application_name=\"$ASYNC\"}"
-B0=$(promv "$LAG_Q"); S0=$(promv "$SEC_Q")
+# L6: always aggregate with max(). After a leader change, earlier primaries' exporter series for the same standby
+# are still in range (one per pod instance), and promv takes only the first result. Seen after a rolling restart:
+# peak 0 from a stale pg-1 series while the current primary reported 218 MB.
+B0=$(promv "max($LAG_Q)"); S0=$(promv "max($SEC_Q)")
 RULES="-s $P_IP -d $A_IP -p tcp --sport 5432"
 T_FAULT=$(date +%s)
 docker exec "$NODE" iptables -I FORWARD 1 $RULES -j DROP
@@ -83,7 +86,7 @@ docker exec "$NODE" iptables -I FORWARD 1 $RULES -m limit --limit "$LIMIT/sec" -
 ( while :; do wal_fill >/dev/null 2>&1 || true; sleep 10; done ) & WRITER=$!
 wait_alerts firing "$HOLD" ReplicationLagHigh && FIRED=1 || FIRED=0
 LAG_FIRING=$(am_lines | grep ReplicationLagHigh || true)
-BMAX=$(promv "max_over_time(${LAG_Q}[10m])"); SMAX=$(promv "max_over_time(${SEC_Q}[10m])")
+BMAX=$(promv "max(max_over_time(${LAG_Q}[10m]))"); SMAX=$(promv "max(max_over_time(${SEC_Q}[10m]))")
 STREAMING=$(q "$RW" monitor "select state from pg_stat_replication where application_name = '$ASYNC'")
 kill "$WRITER" 2>/dev/null || true; wait "$WRITER" 2>/dev/null || true; WRITER=
 docker exec "$NODE" iptables -D FORWARD $RULES -j DROP
@@ -92,11 +95,11 @@ RULES=; T_CLEAR=$(date +%s)
 # Back to near zero: under 1 MiB and under 1 s, as scraped.
 end=$((SECONDS + 180)); T_ZERO=
 while [ $SECONDS -lt $end ]; do
-  b=$(promv "$LAG_Q"); s=$(promv "$SEC_Q")
+  b=$(promv "max($LAG_Q)"); s=$(promv "max($SEC_Q)")
   awk -v b="${b:-1e18}" -v s="${s:-1e9}" 'BEGIN{exit !(b < 1048576 && s < 1)}' && { T_ZERO=$(date +%s); break; }
   sleep 5
 done
-B1=$(promv "$LAG_Q"); S1=$(promv "$SEC_Q")
+B1=$(promv "max($LAG_Q)"); S1=$(promv "max($SEC_Q)")
 wait_alerts resolved 300 ReplicationLagHigh && RESOLVED=1 || RESOLVED=0
 cat >> "$BODY" <<EOF
 

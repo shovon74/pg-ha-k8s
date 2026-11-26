@@ -4,6 +4,11 @@
 set -euo pipefail
 S=main
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
+# L6: kube-router admits a new pod's IP to its policy sets a fraction of a second after the pod starts, so the
+# first connection can be rejected (measured: refused at 217 ms, accepted at 506 ms). Wait up to 30 s for pg-rw
+# to accept connections (pg_isready sends no credentials) before the real query.
+for i in $(seq 1 60); do pg_isready -q -h pg-rw -p 5432 -t 1 && break; sleep 0.5; done
+[ "$i" -eq 1 ] || say "pg-rw reachable after $i attempts"
 # L4: data fingerprint, stored with the backup as annotations, for the restore test to compare (ADR-010).
 FP=$(PGPASSWORD="$APP_RO_PW" psql "host=pg-rw dbname=app user=app_ro connect_timeout=5" -XAtq -v ON_ERROR_STOP=1 -f /scripts/fingerprint.sql) ||
   { say FINGERPRINT_FAILED; exit 1; }

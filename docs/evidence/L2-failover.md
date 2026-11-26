@@ -8,7 +8,7 @@ RTO is fault injection to the first commit acknowledged by a new primary, measur
 
 | Mode | Result | RTO |
 |---|---|---|
-| [pod](L2/pod.md) | PASS | min 2.72 s, median 2.72 s, max 2.72 s over 1 runs |
+| [pod](L2/pod.md) | PASS | min 4.40 s, median 4.40 s, max 4.40 s over 1 runs |
 | [node](L2/node.md) | PASS | min 23.22 s, median 23.93 s, max 26.19 s over 3 runs |
 | [storage](L2/storage.md) | PASS | min 2.39 s, median 3.37 s, max 3.69 s over 3 runs |
 | [split-brain](L2/split-brain.md) | PASS | min 20.47 s, median 22.18 s, max 22.20 s over 3 runs |
@@ -25,9 +25,9 @@ RTO is fault injection to the first commit acknowledged by a new primary, measur
 
 | Run | Old primary | New primary | RTO (s) | Write gap (s) | Acked | RPO (acked rows missing) | Max primaries in one sample | Rejoin | Rejoin after fault (s) | CoreDNS node | Archive failures (new) | Archived after fill (s) | Result |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---|
-| 1 | pg-2 | pg-0 | 2.72 | 2.70 | 134 | 0 | 1 | restart only | 8.99 | k3d-pg-ha-server-0 | 0 | 2.60 | PASS |
+| 1 | pg-2 | pg-0 | 4.40 | 3.90 | 132 | 0 | 1 | restart only | 9.90 | k3d-pg-ha-server-0 | 0 | 1.78 | PASS |
 
-RTO: min 2.72 s, median 2.72 s, max 2.72 s over 1 runs. Target 30 s.
+RTO: min 4.40 s, median 4.40 s, max 4.40 s over 1 runs. Target 30 s.
 
 
 ## node: Result: PASS

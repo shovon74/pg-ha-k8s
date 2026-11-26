@@ -47,7 +47,7 @@ Hand-written notes: [`L5-monitoring-history.md`](L5-monitoring-history.md).
 | Archiver failure counter: 3 series (need 3) | PASS |
 | Archive backlog (.ready): 3 series (need 3) | PASS |
 | Backup and restore-test CronJobs: 2 series (need 2) | PASS |
-| Backup or restore-test Job status: 2 series (need 1) | PASS |
+| Backup or restore-test Job status: 7 series (need 1) | PASS |
 | Expected member count: 1 series (need 1) | PASS |
 | CoreDNS availability: 1 series (need 1) | PASS |
 | Root filesystem free space per node: 4 series (need 4) | PASS |
@@ -55,34 +55,34 @@ Hand-written notes: [`L5-monitoring-history.md`](L5-monitoring-history.md).
 | 19 alerting rules loaded | PASS |
 | Every rule evaluates without error | PASS |
 | No warning or critical alert firing before the fault | PASS |
-| Lag in bytes rose above the 16 MiB threshold (peak 217712496) | PASS |
-| Lag in seconds rose above the 30 s threshold (peak 123.599331) | PASS |
+| Lag in bytes rose above the 16 MiB threshold (peak 218599592) | PASS |
+| Lag in seconds rose above the 30 s threshold (peak 124.603227) | PASS |
 | The standby stayed connected during the throttle (state streaming) | PASS |
 | ReplicationLagHigh fired in Alertmanager | PASS |
 | Lag returned to near zero (< 1 MiB, < 1 s) within 180 s of removing the throttle | PASS |
 | ReplicationLagHigh resolved in Alertmanager | PASS |
 | Measure | Before | Peak during throttle | After |
 |---|---:|---:|---:|
-| Lag bytes (pg-2) | 0 | 217712496 | 0 |
-| Lag seconds (pg-2) | 0.008617 | 123.599331 | 0.006325 |
+| Lag bytes (pg-0) | 0 | 218599592 | 0 |
+| Lag seconds (pg-0) | 0.0022 | 124.603227 | 0 |
 
 | Event | Time (UTC) | Seconds after throttle start |
 |---|---|---:|
-| Throttle on | 16:53:11 | 0 |
-| ReplicationLagHigh first seen firing | 16:55:24 | 133 |
-| Throttle off | 16:55:26 | 135 |
-| Lag back under 1 MiB and 1 s | 16:55:43 | 152 |
-| ReplicationLagHigh gone from Alertmanager | 16:55:43 | 152 |
+| Throttle on | 14:15:46 | 0 |
+| ReplicationLagHigh first seen firing | 14:17:54 | 128 |
+| Throttle off | 14:17:55 | 129 |
+| Lag back under 1 MiB and 1 s | 14:18:11 | 145 |
+| ReplicationLagHigh gone from Alertmanager | 14:18:11 | 145 |
 | Component (scrape job) | Processes | Resident memory, total |
 |---|---:|---:|
-| alertmanager | 1 | 40 MiB |
-| kube-state-metrics-self | 1 | 54 MiB |
-| node | 4 | 75 MiB |
-| postgres | 3 | 58 MiB |
-| prometheus | 1 | 121 MiB |
-| Prometheus TSDB on disk | | 1 MiB |
-| Host memory used / total | | 2577 / 15985 MiB |
-| Host disk used / size (/) | | 13G / 48G (27%) |
+| alertmanager | 1 | 42 MiB |
+| kube-state-metrics-self | 1 | 57 MiB |
+| node | 4 | 80 MiB |
+| postgres | 3 | 59 MiB |
+| prometheus | 1 | 156 MiB |
+| Prometheus TSDB on disk | | 88 MiB |
+| Host memory used / total | | 2626 / 15985 MiB |
+| Host disk used / size (/) | | 14G / 48G (28%) |
 
 ## Alerts on a node failover (R10.3)
 
